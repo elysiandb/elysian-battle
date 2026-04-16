@@ -20,7 +20,6 @@ impl ElysianInstance {
     /// Start ElysianDB, wait for it to become healthy, and return the instance handle.
     pub async fn start(battle_dir: &Path, http_port: u16) -> Result<Self> {
         let binary_path = battle_dir.join("bin/elysiandb");
-        let config_path = battle_dir.join("config/elysian.yaml");
         let log_path = battle_dir.join("logs/elysiandb.log");
 
         std::fs::create_dir_all(battle_dir.join("logs"))
@@ -40,10 +39,13 @@ impl ElysianInstance {
 
         println!("  {} Starting ElysianDB...", style("⟳").yellow());
 
-        let child = Command::new(&binary_path)
+        let abs_binary =
+            std::fs::canonicalize(&binary_path).context("Failed to resolve binary path")?;
+        let config_dir = battle_dir.join("config");
+
+        let child = Command::new(&abs_binary)
             .arg("server")
-            .arg("-config")
-            .arg(&config_path)
+            .current_dir(&config_dir)
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_stderr))
             .kill_on_drop(false)
