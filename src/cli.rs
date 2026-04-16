@@ -49,29 +49,53 @@ impl Cli {
     }
 
     /// If `--version` was not provided, interactively prompt the user
-    /// to select a version source and enter the ref name.
+    /// to select a version source and pick from available branches/tags.
     /// Returns the resolved git ref string.
-    pub fn resolve_version_interactive(&self) -> Result<String> {
+    pub fn resolve_version_interactive(
+        &self,
+        branches: &[String],
+        tags: &[String],
+    ) -> Result<String> {
         if let Some(ref v) = self.ref_version {
             return Ok(v.clone());
         }
 
-        let sources = &["branch", "tag", "latest"];
+        let mut sources = vec!["latest (main)"];
+        if !branches.is_empty() {
+            sources.push("branch");
+        }
+        if !tags.is_empty() {
+            sources.push("tag");
+        }
+        sources.push("custom ref (commit SHA)");
+
         let selection = Select::new()
             .with_prompt("Select version source")
-            .items(sources)
+            .items(&sources)
             .default(0)
             .interact()?;
 
         let ref_name = match sources[selection] {
-            "latest" => "latest".to_string(),
-            kind => {
-                let prompt = format!("Enter {} name", kind);
-                Input::<String>::new()
-                    .with_prompt(prompt)
-                    .default("main".into())
-                    .interact_text()?
+            "latest (main)" => "latest".to_string(),
+            "branch" => {
+                let idx = Select::new()
+                    .with_prompt("Select branch")
+                    .items(branches)
+                    .default(0)
+                    .interact()?;
+                branches[idx].clone()
             }
+            "tag" => {
+                let idx = Select::new()
+                    .with_prompt("Select tag")
+                    .items(tags)
+                    .default(0)
+                    .interact()?;
+                tags[idx].clone()
+            }
+            _ => Input::<String>::new()
+                .with_prompt("Enter commit SHA")
+                .interact_text()?,
         };
 
         Ok(ref_name)

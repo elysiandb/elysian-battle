@@ -1,10 +1,13 @@
+mod builder;
 mod cli;
+mod git;
 mod port;
 mod prerequisites;
 
+use std::path::PathBuf;
 use std::process;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use console::style;
 use tracing::info;
@@ -39,25 +42,40 @@ async fn run(cli: Cli) -> Result<()> {
     println!("  {} Go  {}", style("✓").green(), prereqs.go_version);
     println!();
 
-    // Step 2 — Resolve version (interactive if needed)
-    let version_ref = cli.resolve_version_interactive()?;
+    // Step 2 — Clone / fetch repository (needed before version selection)
+    let battle_dir = PathBuf::from(".battle");
+    std::fs::create_dir_all(&battle_dir).context("Failed to create .battle/ directory")?;
+    info!("Cloning / fetching ElysianDB repository...");
+    let repo_path = git::clone_or_fetch(&battle_dir)?;
+    println!();
+
+    // Step 3 — Resolve version (interactive with real branches/tags if needed)
+    let refs = git::list_refs(&repo_path)?;
+    let version_ref = cli.resolve_version_interactive(&refs.branches, &refs.tags)?;
     info!("Target version: {version_ref}");
 
-    // Step 3 — Find available ports
+    // Step 4 — Find available ports
     let ports = port::find_available_ports()?;
     info!(
         "Ports selected — HTTP: {}, TCP: {}",
         ports.http_port, ports.tcp_port
     );
 
-    // Step 4 — Clone / fetch repository
-    // TODO: implement in src/git.rs (ticket #2)
-
     // Step 5 — Checkout target version
-    // TODO: implement in src/git.rs (ticket #2)
+    let repo_info = git::checkout(&repo_path, &version_ref)?;
+    info!("Checked out: {}", repo_info.checked_out_ref);
+    println!();
 
     // Step 6 — Build ElysianDB binary
-    // TODO: implement in src/builder.rs (ticket #3)
+    let build_result = builder::build_elysiandb(&repo_path, &battle_dir, cli.no_build)?;
+    if !build_result.skipped {
+        info!(
+            "Binary ready: {} ({:.1}s)",
+            build_result.binary_path.display(),
+            build_result.duration_secs
+        );
+    }
+    println!();
 
     // Step 7 — Generate elysian.yaml config
     // TODO: implement in src/config.rs (ticket #4)
@@ -82,7 +100,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     println!(
-        "  {} Skeleton ready — pipeline steps 4-12 are stubs for future tickets.",
+        "  {} Pipeline steps 7-12 are stubs for future tickets.",
         style("✓").green()
     );
 
