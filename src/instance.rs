@@ -41,6 +41,7 @@ impl ElysianInstance {
         println!("  {} Starting ElysianDB...", style("⟳").yellow());
 
         let child = Command::new(&binary_path)
+            .arg("server")
             .arg("-config")
             .arg(&config_path)
             .stdout(Stdio::from(log_file))
