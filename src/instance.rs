@@ -41,8 +41,7 @@ impl ElysianInstance {
         println!("  {} Starting ElysianDB...", style("⟳").yellow());
 
         let child = Command::new(&binary_path)
-            .arg("server")
-            .arg("--config")
+            .arg("-config")
             .arg(&config_path)
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_stderr))
@@ -69,16 +68,27 @@ impl ElysianInstance {
     }
 
     /// Poll `GET /health` until 200 or timeout (30s).
+    ///
+    /// In `user` auth mode, `/health` requires an authenticated session.
+    /// We first wait for the server to accept TCP connections, then POST
+    /// `/api/security/login` with admin/admin to obtain a session cookie,
+    /// and finally hit `/health` with that cookie.
     async fn wait_for_health(&self) -> Result<()> {
-        let url = format!("http://127.0.0.1:{}/health", self.http_port);
+        let base = format!("http://127.0.0.1:{}", self.http_port);
+        let health_url = format!("{base}/health");
+        let login_url = format!("{base}/api/security/login");
         let timeout = Duration::from_secs(30);
         let interval = Duration::from_millis(500);
         let deadline = Instant::now() + timeout;
+
+        // Cookie jar keeps the session cookie from login
         let client = reqwest::Client::builder()
+            .cookie_store(true)
             .timeout(Duration::from_secs(2))
             .build()
             .context("Failed to create HTTP client")?;
 
+        // Phase 1: wait for the server to respond at all (any status on /health)
         loop {
             if Instant::now() > deadline {
                 self.print_log_tail(50);
@@ -89,14 +99,50 @@ impl ElysianInstance {
                 );
             }
 
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().as_u16() == 200 => {
-                    println!("  {} Health check passed", style("✓").green());
-                    return Ok(());
-                }
-                _ => sleep(interval).await,
+            if client.get(&health_url).send().await.is_ok() {
+                break;
             }
+            sleep(interval).await;
         }
+
+        // Phase 2: authenticate to get a session cookie
+        let login_body = serde_json::json!({
+            "username": "admin",
+            "password": "admin"
+        });
+        let login_resp = client
+            .post(&login_url)
+            .json(&login_body)
+            .send()
+            .await
+            .context("Failed to send login request")?;
+
+        if !login_resp.status().is_success() {
+            self.print_log_tail(50);
+            bail!(
+                "Login to ElysianDB failed (status {}). Check log output above.",
+                login_resp.status()
+            );
+        }
+        info!("Authenticated with ElysianDB (admin)");
+
+        // Phase 3: health check with session cookie
+        let resp = client
+            .get(&health_url)
+            .send()
+            .await
+            .context("Health check request failed after login")?;
+
+        if resp.status().as_u16() != 200 {
+            self.print_log_tail(50);
+            bail!(
+                "Health check returned {} after login — expected 200",
+                resp.status()
+            );
+        }
+
+        println!("  {} Health check passed", style("✓").green());
+        Ok(())
     }
 
     /// Print the last `n` lines of the ElysianDB log file to stderr.
