@@ -25,11 +25,53 @@ The smoke test added in #4 runs as a **pre-flight check** (step 10) that validat
 
 ## Acceptance checklist
 
-- [x] Runner executes suites sequentially with cleanup between each
-- [x] `--suite crud,query` runs only specified suites (flexible name matching)
-- [x] Terminal report shows colored pass/fail per suite with table
-- [x] JSON report written to `.battle/reports/` with correct schema
-- [x] `latest.json` symlink updated
-- [x] Progress bar shows test execution progress
-- [x] Exit codes match spec (0/1/2)
-- [x] `cargo build` / `cargo clippy` / `cargo fmt --check` / `cargo test` all pass (28 tests)
+### Automated checks
+
+- [x] `cargo build` compiles without errors
+- [x] `cargo clippy` passes (no new warnings)
+- [x] `cargo fmt --check` passes
+- [x] `cargo test` — 28 tests pass (includes unit tests for runner filter, report exit codes, JSON serialization, symlink creation)
+
+### Recette : pipeline complète (text mode)
+
+- [ ] Lancer `cargo run -- --version latest` (sans `--suite`) — vérifier que :
+  - Le smoke test (step 10) s'exécute et affiche les `✓` HTTP/TCP
+  - Le runner (step 11) affiche `No test suites to run` (attendu : aucune suite implémentée)
+  - Le report (step 13) écrit un JSON dans `.battle/reports/<timestamp>.json`
+  - Le symlink `.battle/reports/latest.json` pointe vers ce fichier
+  - Le JSON contient les champs `version`, `elysiandb_version`, `timestamp`, `suites: []`, `total_passed: 0`
+  - Le process exit avec code 0
+
+### Recette : JSON mode
+
+- [ ] Lancer `cargo run -- --version latest --report json` — vérifier que :
+  - Pas de table colorée dans le terminal, uniquement le chemin du JSON affiché
+  - Le fichier JSON est bien écrit avec le même schéma
+  - Le symlink `latest.json` est mis à jour
+
+### Recette : filtre --suite
+
+- [ ] Lancer `cargo run -- --version latest --suite crud,query` — vérifier que :
+  - Le runner n'affiche aucune suite (aucune implémentée) et le filtre est silencieux
+  - Le report JSON contient `suites: []` et exit code 0
+
+### Recette : --keep-alive
+
+- [ ] Lancer `cargo run -- --version latest --keep-alive` — vérifier que :
+  - Après le runner, le message `ElysianDB left running (--keep-alive) on port XXXX` s'affiche
+  - Le report est quand même généré
+  - ElysianDB reste accessible (`curl http://127.0.0.1:XXXX/health`)
+
+### Recette : cohérence smoke test → runner
+
+- [ ] Vérifier que le smoke test (step 10) et le runner (step 11) cohabitent :
+  - Le smoke test crée/supprime `battle_smoke` et des clés KV
+  - Le runner fait un cleanup global avant chaque suite (reset KV + delete entities)
+  - Aucune erreur ou conflit entre les deux étapes
+
+### Recette : validation du schéma JSON du report
+
+- [ ] Ouvrir le fichier `.battle/reports/latest.json` et vérifier la structure :
+  - Clés présentes : `version`, `elysiandb_version`, `timestamp`, `suites`, `performance`, `total_passed`, `total_failed`, `total_skipped`, `total_duration`
+  - `total_duration` est un entier en millisecondes (pas un objet Duration)
+  - `suites` et `performance` sont des arrays (vides pour l'instant)
