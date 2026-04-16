@@ -1,10 +1,12 @@
 mod builder;
 mod cli;
+mod client;
 mod config;
 mod git;
 mod instance;
 mod port;
 mod prerequisites;
+mod tcp_client;
 
 use std::path::PathBuf;
 use std::process;
