@@ -6,6 +6,8 @@ use serde::Serialize;
 
 use crate::client::ElysianClient;
 
+mod health;
+
 // ---- Status & result types ------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
@@ -124,7 +126,7 @@ pub const BATTLE_ENTITIES: &[&str] = &[
 ///
 /// Individual suite implementations are added in subsequent tickets.
 pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
-    vec![]
+    vec![Box::new(health::HealthSuite)]
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -169,8 +171,9 @@ mod tests {
     }
 
     #[test]
-    fn all_suites_returns_empty_until_implemented() {
+    fn all_suites_includes_health() {
         let suites = all_suites(0);
-        assert!(suites.is_empty());
+        assert_eq!(suites.len(), 1);
+        assert_eq!(suites[0].name(), "Health & System");
     }
 }
