@@ -24,6 +24,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tabled = "0.16"
 async-trait = "0.1"
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 lto = true
 strip = true
