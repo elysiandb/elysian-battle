@@ -1,11 +1,16 @@
 mod builder;
 mod cli;
+#[allow(dead_code)]
 mod client;
 mod config;
 mod git;
 mod instance;
 mod port;
 mod prerequisites;
+mod report;
+mod runner;
+mod suites;
+#[allow(dead_code)]
 mod tcp_client;
 
 use std::path::PathBuf;
@@ -91,11 +96,17 @@ async fn run(cli: Cli) -> Result<()> {
     smoke_test(ports.http_port, ports.tcp_port).await?;
 
     // Step 11 — Run test suites
-    // TODO: implement in src/runner.rs (future ticket)
+    let http_client = client::ElysianClient::new(ports.http_port);
+    let login_resp = http_client.login("admin", "admin").await?;
+    anyhow::ensure!(
+        login_resp.status().is_success(),
+        "Runner login failed: {}",
+        login_resp.status()
+    );
 
-    if let Some(suites) = cli.parse_suites() {
-        info!("Suite filter: {:?}", suites);
-    }
+    let all_suites = suites::all_suites(ports.tcp_port);
+    let runner = runner::Runner::new(all_suites, cli.parse_suites());
+    let battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
 
     // Step 12 — Stop ElysianDB
     if !cli.keep_alive {
@@ -108,8 +119,11 @@ async fn run(cli: Cli) -> Result<()> {
         );
     }
 
-    // Step 13 — Generate report
-    // TODO: implement in src/report.rs (future ticket)
+    // Step 13 — Generate report and derive exit code
+    let exit_code = report::generate(&battle_report, cli.report, &battle_dir)?;
+    if exit_code != 0 {
+        process::exit(exit_code);
+    }
 
     Ok(())
 }
