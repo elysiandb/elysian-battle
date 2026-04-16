@@ -39,13 +39,14 @@ impl ElysianInstance {
 
         println!("  {} Starting ElysianDB...", style("⟳").yellow());
 
-        let abs_binary =
-            std::fs::canonicalize(&binary_path).context("Failed to resolve binary path")?;
-        let config_dir = battle_dir.join("config");
+        let config_path = battle_dir.join("config/elysian.yaml");
 
-        let child = Command::new(&abs_binary)
+        // Flags must come before the subcommand — Go's flag.Parse() stops
+        // at the first non-flag argument.
+        let child = Command::new(&binary_path)
+            .arg("-config")
+            .arg(&config_path)
             .arg("server")
-            .current_dir(&config_dir)
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_stderr))
             .kill_on_drop(false)
