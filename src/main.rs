@@ -1,10 +1,12 @@
 mod builder;
 mod cli;
+mod client;
 mod config;
 mod git;
 mod instance;
 mod port;
 mod prerequisites;
+mod tcp_client;
 
 use std::path::PathBuf;
 use std::process;
@@ -85,14 +87,17 @@ async fn run(cli: Cli) -> Result<()> {
     // Step 8+9 — Start ElysianDB process and health check
     let mut instance = instance::ElysianInstance::start(&battle_dir, ports.http_port).await?;
 
-    // Step 10 — Run test suites
+    // Step 10 — Smoke-test both clients against the live instance
+    smoke_test(ports.http_port, ports.tcp_port).await?;
+
+    // Step 11 — Run test suites
     // TODO: implement in src/runner.rs (future ticket)
 
     if let Some(suites) = cli.parse_suites() {
         info!("Suite filter: {:?}", suites);
     }
 
-    // Step 11 — Stop ElysianDB
+    // Step 12 — Stop ElysianDB
     if !cli.keep_alive {
         instance.stop().await?;
     } else {
@@ -103,9 +108,113 @@ async fn run(cli: Cli) -> Result<()> {
         );
     }
 
-    // Step 12 — Generate report
+    // Step 13 — Generate report
     // TODO: implement in src/report.rs (future ticket)
 
+    Ok(())
+}
+
+/// Quick smoke test exercising both clients against the live ElysianDB instance.
+async fn smoke_test(http_port: u16, tcp_port: u16) -> Result<()> {
+    use client::ElysianClient;
+    use tcp_client::ElysianTcpClient;
+
+    println!("  {} Running client smoke test...", style("~").yellow());
+
+    // ---- HTTP client ----
+    let http = ElysianClient::new(http_port);
+
+    // Login
+    let resp = http.login("admin", "admin").await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "login failed: {}",
+        resp.status()
+    );
+    println!("    {} HTTP login", style("✓").green());
+
+    // Health
+    let resp = http.health().await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "health failed: {}",
+        resp.status()
+    );
+    println!("    {} HTTP health", style("✓").green());
+
+    // Create entity
+    let doc = serde_json::json!({"title": "Smoke Test", "value": 42});
+    let resp = http.create("battle_smoke", doc).await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "create failed: {}",
+        resp.status()
+    );
+    let created: serde_json::Value = resp.json().await?;
+    let id = created["id"]
+        .as_str()
+        .context("missing id in create response")?;
+    println!("    {} HTTP create (id={})", style("✓").green(), id);
+
+    // Read back
+    let resp = http.get("battle_smoke", id).await?;
+    anyhow::ensure!(resp.status().is_success(), "get failed: {}", resp.status());
+    println!("    {} HTTP get", style("✓").green());
+
+    // Delete
+    let resp = http.delete("battle_smoke", id).await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "delete failed: {}",
+        resp.status()
+    );
+    println!("    {} HTTP delete", style("✓").green());
+
+    // Cleanup entity
+    let _ = http.delete_all("battle_smoke").await;
+
+    // KV via HTTP
+    let resp = http.kv_set("battle_smoke_key", "hello", None).await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "kv_set failed: {}",
+        resp.status()
+    );
+    let resp = http.kv_get("battle_smoke_key").await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "kv_get failed: {}",
+        resp.status()
+    );
+    let resp = http.kv_delete("battle_smoke_key").await?;
+    anyhow::ensure!(
+        resp.status().is_success(),
+        "kv_delete failed: {}",
+        resp.status()
+    );
+    println!("    {} HTTP kv set/get/delete", style("✓").green());
+
+    // ---- TCP client ----
+    let mut tcp = ElysianTcpClient::connect(tcp_port).await?;
+
+    let pong = tcp.ping().await?;
+    anyhow::ensure!(pong == "PONG", "expected PONG, got: {pong}");
+    println!("    {} TCP PING → PONG", style("✓").green());
+
+    let ok = tcp.set("battle_smoke_tcp", "world").await?;
+    anyhow::ensure!(ok == "OK", "expected OK, got: {ok}");
+
+    let val = tcp.get("battle_smoke_tcp").await?;
+    anyhow::ensure!(
+        val == "battle_smoke_tcp=world",
+        "expected 'battle_smoke_tcp=world', got: {val}"
+    );
+    println!("    {} TCP SET/GET", style("✓").green());
+
+    let _ = tcp.del("battle_smoke_tcp").await?;
+    println!("    {} TCP DEL", style("✓").green());
+
+    println!("  {} Client smoke test passed", style("✓").green().bold());
     Ok(())
 }
 
