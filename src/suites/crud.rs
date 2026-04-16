@@ -1118,6 +1118,14 @@ async fn c13_list_field_projection(suite: &str, client: &ElysianClient) -> TestR
                 )
             }
         };
+        // The test scenario catalogue describes the response as "Only `title`
+        // and `id` in response (no `pages`)", but the actual ElysianDB
+        // behaviour is strict projection — `?fields=title` returns `title`
+        // only, with no auto-included `id`. We therefore only enforce what
+        // ElysianDB guarantees: the requested field is present AND the
+        // unrequested field is absent. `id` is allowed to be either present
+        // or absent depending on server version. Seed must carry no
+        // duplicate titles so `title` alone identifies the document.
         if !obj.contains_key("title") {
             return fail(
                 suite,
@@ -1137,6 +1145,24 @@ async fn c13_list_field_projection(suite: &str, client: &ElysianClient) -> TestR
                 duration,
                 format!("item {i} should not contain `pages` (projection ignored)"),
             );
+        }
+        // Guard against "projection drops everything" regressions: the
+        // response must have at least the requested field and nothing
+        // beyond what was requested (id is tolerated when present).
+        for (k, _) in obj.iter() {
+            if k != "title" && k != "id" {
+                return fail(
+                    suite,
+                    name,
+                    request,
+                    Some(status),
+                    duration,
+                    format!(
+                        "item {i} contains unexpected key `{k}` — projection must be limited to \
+                         the requested fields (plus optionally `id`)"
+                    ),
+                );
+            }
         }
     }
 
@@ -1205,13 +1231,12 @@ async fn c14_list_search(suite: &str, client: &ElysianClient) -> TestResult {
             )
         }
     };
+    // Positive: at least one result must be the Dune document.
     let has_dune = arr
         .iter()
         .any(|d| d.get("title").and_then(|v| v.as_str()) == Some("Dune"));
-    if has_dune {
-        pass(suite, name, request, Some(status), duration)
-    } else {
-        fail(
+    if !has_dune {
+        return fail(
             suite,
             name,
             request,
@@ -1221,8 +1246,42 @@ async fn c14_list_search(suite: &str, client: &ElysianClient) -> TestResult {
                 "expected at least one match for \"Dune\", got {} items",
                 arr.len()
             ),
-        )
+        );
     }
+    // Negative: the seed has 4 distinct titles and only one ("Dune") matches.
+    // If the backend returned the whole seed, `search` was a no-op — reject.
+    let seed_len = standard_seed().len();
+    if arr.len() >= seed_len {
+        return fail(
+            suite,
+            name,
+            request,
+            Some(status),
+            duration,
+            format!(
+                "search appears to be a no-op: got {} items (seed has {seed_len} distinct titles, only \"Dune\" should match)",
+                arr.len()
+            ),
+        );
+    }
+    // Stronger check: every returned title should mention the search term.
+    let all_match = arr.iter().all(|d| {
+        d.get("title")
+            .and_then(|v| v.as_str())
+            .map(|t| t.to_ascii_lowercase().contains("dune"))
+            .unwrap_or(false)
+    });
+    if !all_match {
+        return fail(
+            suite,
+            name,
+            request,
+            Some(status),
+            duration,
+            "some returned items do not contain \"Dune\" — search filter not applied".to_string(),
+        );
+    }
+    pass(suite, name, request, Some(status), duration)
 }
 
 // C-15 — Get by ID
@@ -2012,4 +2071,53 @@ async fn c24_exists_false(suite: &str, client: &ElysianClient) -> TestResult {
         duration,
         format!("expected 404 or falsy 200, got {status}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_falsy_exists_body;
+
+    #[test]
+    fn falsy_empty_body() {
+        assert!(is_falsy_exists_body(""));
+        assert!(is_falsy_exists_body("   "));
+        assert!(is_falsy_exists_body("\n"));
+    }
+
+    #[test]
+    fn falsy_plain_literals() {
+        assert!(is_falsy_exists_body("false"));
+        assert!(is_falsy_exists_body("FALSE"));
+        assert!(is_falsy_exists_body("0"));
+        assert!(is_falsy_exists_body("null"));
+    }
+
+    #[test]
+    fn falsy_empty_object() {
+        assert!(is_falsy_exists_body("{}"));
+    }
+
+    #[test]
+    fn falsy_exists_field_variants() {
+        assert!(is_falsy_exists_body(r#"{"exists":false}"#));
+        assert!(is_falsy_exists_body(r#"{"exists": false}"#));
+        assert!(is_falsy_exists_body(r#"{  "exists" : false  }"#));
+        assert!(is_falsy_exists_body(r#"{"exists": null}"#));
+    }
+
+    #[test]
+    fn non_falsy_true_exists() {
+        assert!(!is_falsy_exists_body(r#"{"exists":true}"#));
+        assert!(!is_falsy_exists_body("true"));
+        assert!(!is_falsy_exists_body("1"));
+    }
+
+    #[test]
+    fn non_falsy_exists_non_bool() {
+        // An unexpected shape must NOT be treated as falsy — better to fail
+        // loudly than to mask a real regression.
+        assert!(!is_falsy_exists_body(r#"{"exists":"maybe"}"#));
+        assert!(!is_falsy_exists_body(r#"{"foo":"bar"}"#));
+        assert!(!is_falsy_exists_body("not-json-and-not-a-known-literal"));
+    }
 }

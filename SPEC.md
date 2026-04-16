@@ -365,7 +365,7 @@ impl ElysianClient {
 
 - Discovers and registers all test suites.
 - Executes suites sequentially (isolation between suites via data reset).
-- **Cleanup between suites**: `POST /reset` clears KV keys only; `DELETE /api/{entity}` is called for each known `battle_*` entity to clear document data. Both are needed for full isolation.
+- **Cleanup between suites**: `DELETE /api/{entity}` is called for each known `battle_*` entity to clear document data. `POST /reset` is intentionally **not** used here: in the targeted ElysianDB versions it wipes every KV key including the admin session and per-entity ACL grants, after which even an explicitly re-logged-in admin gets `403 Access denied` on documents they own. KV-specific cleanup must therefore live inside the suites that actually set KV keys (e.g. the KV suite), not in the global between-suite cleanup.
 - Collects results (`TestResult { suite, name, status, duration, error }`).
 - Feeds results to `report.rs`.
 - The crash recovery suite is special: it kills and restarts the ElysianDB process via `instance.rs`, so it must run last (before performance).
@@ -749,7 +749,7 @@ Key decisions:
 ## 12. Lifecycle & Cleanup
 
 1. **Before tests**: wipe `.battle/data/` to ensure clean state.
-2. **Between suites**: call `POST /reset` + `DELETE /api/{entity}` for known test entities to isolate suites.
+2. **Between suites**: call `DELETE /api/{entity}` for every known `battle_*` entity to isolate suites. `POST /reset` is intentionally excluded because it destroys admin ACL state for the rest of the process — KV-specific cleanup is performed inside the suites that own the keys.
 3. **After tests**: stop ElysianDB (SIGTERM), optionally keep alive (`--keep-alive`).
 4. **Reports**: never deleted automatically, accumulate in `.battle/reports/`.
 
