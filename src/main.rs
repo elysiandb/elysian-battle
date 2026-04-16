@@ -1,6 +1,8 @@
 mod builder;
 mod cli;
+mod config;
 mod git;
+mod instance;
 mod port;
 mod prerequisites;
 
@@ -78,31 +80,31 @@ async fn run(cli: Cli) -> Result<()> {
     println!();
 
     // Step 7 — Generate elysian.yaml config
-    // TODO: implement in src/config.rs (ticket #4)
+    config::generate_config(&battle_dir, &ports)?;
 
-    // Step 8 — Start ElysianDB process
-    // TODO: implement in src/instance.rs (ticket #5)
-
-    // Step 9 — Health check
-    // TODO: implement in src/instance.rs (ticket #5)
+    // Step 8+9 — Start ElysianDB process and health check
+    let mut instance = instance::ElysianInstance::start(&battle_dir, ports.http_port).await?;
 
     // Step 10 — Run test suites
-    // TODO: implement in src/runner.rs (ticket #6+)
-
-    // Step 11 — Stop ElysianDB
-    // TODO: implement in src/instance.rs (ticket #5)
-
-    // Step 12 — Generate report
-    // TODO: implement in src/report.rs (ticket #7)
+    // TODO: implement in src/runner.rs (future ticket)
 
     if let Some(suites) = cli.parse_suites() {
         info!("Suite filter: {:?}", suites);
     }
 
-    println!(
-        "  {} Pipeline steps 7-12 are stubs for future tickets.",
-        style("✓").green()
-    );
+    // Step 11 — Stop ElysianDB
+    if !cli.keep_alive {
+        instance.stop().await?;
+    } else {
+        println!(
+            "  {} ElysianDB left running (--keep-alive) on port {}",
+            style("ℹ").cyan(),
+            ports.http_port,
+        );
+    }
+
+    // Step 12 — Generate report
+    // TODO: implement in src/report.rs (future ticket)
 
     Ok(())
 }
