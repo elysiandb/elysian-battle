@@ -32,46 +32,46 @@ The smoke test added in #4 runs as a **pre-flight check** (step 10) that validat
 - [x] `cargo fmt --check` passes
 - [x] `cargo test` — 28 tests pass (includes unit tests for runner filter, report exit codes, JSON serialization, symlink creation)
 
-### Recette : pipeline complète (text mode)
+### Manual testing: full pipeline in text mode
 
-- [ ] Lancer `cargo run -- --version latest` (sans `--suite`) — vérifier que :
-  - Le smoke test (step 10) s'exécute et affiche les `✓` HTTP/TCP
-  - Le runner (step 11) affiche `No test suites to run` (attendu : aucune suite implémentée)
-  - Le report (step 13) écrit un JSON dans `.battle/reports/<timestamp>.json`
-  - Le symlink `.battle/reports/latest.json` pointe vers ce fichier
-  - Le JSON contient les champs `version`, `elysiandb_version`, `timestamp`, `suites: []`, `total_passed: 0`
-  - Le process exit avec code 0
+- [ ] Run `cargo run -- --version latest` (no `--suite` filter) and verify:
+  - Smoke test (step 10) executes and prints `✓` lines for HTTP and TCP checks
+  - Runner (step 11) prints `No test suites to run` (expected: no suites implemented yet)
+  - Report (step 13) writes a JSON file to `.battle/reports/<timestamp>.json`
+  - Symlink `.battle/reports/latest.json` points to that file
+  - JSON contains fields `version`, `elysiandb_version`, `timestamp`, `suites: []`, `total_passed: 0`
+  - Process exits with code 0 (`echo $?`)
 
-### Recette : JSON mode
+### Manual testing: JSON report mode
 
-- [ ] Lancer `cargo run -- --version latest --report json` — vérifier que :
-  - Pas de table colorée dans le terminal, uniquement le chemin du JSON affiché
-  - Le fichier JSON est bien écrit avec le même schéma
-  - Le symlink `latest.json` est mis à jour
+- [ ] Run `cargo run -- --version latest --report json` and verify:
+  - No colored table printed to terminal — only the JSON file path is displayed
+  - JSON file is written with the same schema as text mode
+  - `latest.json` symlink is updated to the new file
 
-### Recette : filtre --suite
+### Manual testing: --suite filter
 
-- [ ] Lancer `cargo run -- --version latest --suite crud,query` — vérifier que :
-  - Le runner n'affiche aucune suite (aucune implémentée) et le filtre est silencieux
-  - Le report JSON contient `suites: []` et exit code 0
+- [ ] Run `cargo run -- --version latest --suite crud,query` and verify:
+  - Runner reports no matching suites (none implemented yet), filter is silent
+  - Report JSON contains `suites: []` and exit code is 0
 
-### Recette : --keep-alive
+### Manual testing: --keep-alive flag
 
-- [ ] Lancer `cargo run -- --version latest --keep-alive` — vérifier que :
-  - Après le runner, le message `ElysianDB left running (--keep-alive) on port XXXX` s'affiche
-  - Le report est quand même généré
-  - ElysianDB reste accessible (`curl http://127.0.0.1:XXXX/health`)
+- [ ] Run `cargo run -- --version latest --keep-alive` and verify:
+  - After the runner, message `ElysianDB left running (--keep-alive) on port XXXX` is displayed
+  - Report is still generated and written to disk
+  - ElysianDB is still accessible: `curl http://127.0.0.1:XXXX/health` returns 200
 
-### Recette : cohérence smoke test → runner
+### Manual testing: smoke test → runner coherence
 
-- [ ] Vérifier que le smoke test (step 10) et le runner (step 11) cohabitent :
-  - Le smoke test crée/supprime `battle_smoke` et des clés KV
-  - Le runner fait un cleanup global avant chaque suite (reset KV + delete entities)
-  - Aucune erreur ou conflit entre les deux étapes
+- [ ] Verify that smoke test (step 10) and runner (step 11) coexist without conflict:
+  - Smoke test creates/deletes `battle_smoke` entities and KV keys
+  - Runner performs global cleanup before each suite (reset KV + delete all battle_* entities)
+  - No errors or data conflicts between the two steps in the log output
 
-### Recette : validation du schéma JSON du report
+### Manual testing: JSON report schema validation
 
-- [ ] Ouvrir le fichier `.battle/reports/latest.json` et vérifier la structure :
-  - Clés présentes : `version`, `elysiandb_version`, `timestamp`, `suites`, `performance`, `total_passed`, `total_failed`, `total_skipped`, `total_duration`
-  - `total_duration` est un entier en millisecondes (pas un objet Duration)
-  - `suites` et `performance` sont des arrays (vides pour l'instant)
+- [ ] Open `.battle/reports/latest.json` and verify the structure:
+  - All required keys present: `version`, `elysiandb_version`, `timestamp`, `suites`, `performance`, `total_passed`, `total_failed`, `total_skipped`, `total_duration`
+  - `total_duration` is an integer in milliseconds (not a Duration object)
+  - `suites` and `performance` are arrays (empty for now)
