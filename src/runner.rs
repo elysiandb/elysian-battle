@@ -37,7 +37,18 @@ impl Runner {
             .collect();
 
         if indices.is_empty() {
-            println!("\n  {} No test suites to run", style("ℹ").cyan());
+            if self.suites.is_empty() {
+                println!(
+                    "\n  {} No test suites registered (implementations pending)",
+                    style("ℹ").cyan()
+                );
+            } else if let Some(ref filter) = self.suite_filter {
+                println!(
+                    "\n  {} No suites match filter: {}",
+                    style("⚠").yellow(),
+                    filter.join(", ")
+                );
+            }
         } else {
             println!();
             let pb = ProgressBar::new(indices.len() as u64);

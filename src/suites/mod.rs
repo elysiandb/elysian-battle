@@ -10,6 +10,7 @@ use crate::client::ElysianClient;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 pub enum TestStatus {
     Passed,
     Failed,
@@ -76,6 +77,7 @@ where
 // ---- TestSuite trait -------------------------------------------------------
 
 #[async_trait]
+#[allow(dead_code)]
 pub trait TestSuite: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;

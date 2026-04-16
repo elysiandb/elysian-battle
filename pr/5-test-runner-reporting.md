@@ -27,8 +27,8 @@ The smoke test added in #4 runs as a **pre-flight check** (step 10) that validat
 
 ### Automated checks
 
-- [x] `cargo build` compiles without errors
-- [x] `cargo clippy` passes (no new warnings)
+- [x] `cargo build` compiles without errors and zero warnings
+- [x] `cargo clippy` passes with zero warnings
 - [x] `cargo fmt --check` passes
 - [x] `cargo test` — 28 tests pass (includes unit tests for runner filter, report exit codes, JSON serialization, symlink creation)
 

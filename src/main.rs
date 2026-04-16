@@ -1,5 +1,6 @@
 mod builder;
 mod cli;
+#[allow(dead_code)]
 mod client;
 mod config;
 mod git;
@@ -9,6 +10,7 @@ mod prerequisites;
 mod report;
 mod runner;
 mod suites;
+#[allow(dead_code)]
 mod tcp_client;
 
 use std::path::PathBuf;
