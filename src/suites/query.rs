@@ -29,14 +29,14 @@
 //!    asserts only that the request is accepted — stricter semantics would
 //!    require a server fix.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::client::ElysianClient;
-use crate::suites::{TestResult, TestStatus, TestSuite};
+use crate::suites::{fail, pass, TestResult, TestSuite};
 
 const ENTITY: &str = "battle_articles";
 
@@ -87,47 +87,6 @@ impl TestSuite for QuerySuite {
     async fn teardown(&self, client: &ElysianClient) -> Result<()> {
         let _ = client.delete_all(ENTITY).await;
         Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Result helpers
-// ---------------------------------------------------------------------------
-
-fn pass(
-    suite: &str,
-    name: &str,
-    request: String,
-    status: Option<u16>,
-    duration: Duration,
-) -> TestResult {
-    TestResult {
-        suite: suite.to_string(),
-        name: name.to_string(),
-        status: TestStatus::Passed,
-        duration,
-        error: None,
-        request: Some(request),
-        response_status: status,
-    }
-}
-
-fn fail(
-    suite: &str,
-    name: &str,
-    request: String,
-    status: Option<u16>,
-    duration: Duration,
-    error: impl Into<String>,
-) -> TestResult {
-    TestResult {
-        suite: suite.to_string(),
-        name: name.to_string(),
-        status: TestStatus::Failed,
-        duration,
-        error: Some(error.into()),
-        request: Some(request),
-        response_status: status,
     }
 }
 
@@ -1107,6 +1066,51 @@ mod tests {
         assert_eq!(
             count(&|d| d.pointer("/metadata/source").and_then(|v| v.as_str()) == Some("rss")),
             6
+        );
+    }
+
+    /// Q-17 asserts the top-5 published articles by `views` desc are exactly
+    /// `[1000, 950, 750, 600, 500]`. QP-08 asserts the top-3 titles in the
+    /// same projection are `["Music Trends", "Intro to Rust", "API Design"]`.
+    /// Both are hand-audited against the seed — this test regenerates them
+    /// from the seed so that any future `views` tweak that changes the
+    /// ordering fails `cargo test` instead of the integration run.
+    #[test]
+    fn seed_top_published_by_views_matches_integration_expectations() {
+        let seed = seed_articles();
+        let mut published: Vec<&Value> = seed
+            .iter()
+            .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("published"))
+            .collect();
+
+        // Sort by views desc. Stable sort to keep insertion order on ties —
+        // matches what ElysianDB's engine does for equal keys.
+        published.sort_by(|a, b| {
+            let av = a.get("views").and_then(|v| v.as_i64()).unwrap_or_default();
+            let bv = b.get("views").and_then(|v| v.as_i64()).unwrap_or_default();
+            bv.cmp(&av)
+        });
+
+        let top5_views: Vec<i64> = published
+            .iter()
+            .take(5)
+            .map(|d| d.get("views").and_then(|v| v.as_i64()).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            top5_views,
+            vec![1000, 950, 750, 600, 500],
+            "Q-17 expectation drifted from seed"
+        );
+
+        let top3_titles: Vec<&str> = published
+            .iter()
+            .take(3)
+            .filter_map(|d| d.get("title").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(
+            top3_titles,
+            vec!["Music Trends", "Intro to Rust", "API Design"],
+            "QP-08 expectation drifted from seed"
         );
     }
 }

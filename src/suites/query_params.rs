@@ -8,7 +8,7 @@
 //! reseeds in its own `setup()` since the runner wipes `battle_articles`
 //! between suites.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::client::ElysianClient;
 use crate::suites::query;
-use crate::suites::{TestResult, TestStatus, TestSuite};
+use crate::suites::{fail, pass, TestResult, TestSuite};
 
 const ENTITY: &str = "battle_articles";
 
@@ -56,47 +56,6 @@ impl TestSuite for QueryParamsSuite {
     async fn teardown(&self, client: &ElysianClient) -> Result<()> {
         let _ = client.delete_all(ENTITY).await;
         Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Result helpers
-// ---------------------------------------------------------------------------
-
-fn pass(
-    suite: &str,
-    name: &str,
-    request: String,
-    status: Option<u16>,
-    duration: Duration,
-) -> TestResult {
-    TestResult {
-        suite: suite.to_string(),
-        name: name.to_string(),
-        status: TestStatus::Passed,
-        duration,
-        error: None,
-        request: Some(request),
-        response_status: status,
-    }
-}
-
-fn fail(
-    suite: &str,
-    name: &str,
-    request: String,
-    status: Option<u16>,
-    duration: Duration,
-    error: impl Into<String>,
-) -> TestResult {
-    TestResult {
-        suite: suite.to_string(),
-        name: name.to_string(),
-        status: TestStatus::Failed,
-        duration,
-        error: Some(error.into()),
-        request: Some(request),
-        response_status: status,
     }
 }
 

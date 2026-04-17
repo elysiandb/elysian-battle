@@ -79,6 +79,51 @@ where
     s.serialize_u64(d.as_millis() as u64)
 }
 
+// ---- TestResult builders ---------------------------------------------------
+//
+// Shared helpers used by every suite. The `request` argument is a
+// human-readable summary of the request for the final report — it is NOT
+// the wire-level URL or body. URL-parameter-form strings like
+// `"GET /api/x?filter[foo][eq]=bar"` appear verbatim in reports; reqwest /
+// url handle percent-encoding for the actual HTTP call.
+
+pub(crate) fn pass(
+    suite: &str,
+    name: &str,
+    request: String,
+    status: Option<u16>,
+    duration: Duration,
+) -> TestResult {
+    TestResult {
+        suite: suite.to_string(),
+        name: name.to_string(),
+        status: TestStatus::Passed,
+        duration,
+        error: None,
+        request: Some(request),
+        response_status: status,
+    }
+}
+
+pub(crate) fn fail(
+    suite: &str,
+    name: &str,
+    request: String,
+    status: Option<u16>,
+    duration: Duration,
+    error: impl Into<String>,
+) -> TestResult {
+    TestResult {
+        suite: suite.to_string(),
+        name: name.to_string(),
+        status: TestStatus::Failed,
+        duration,
+        error: Some(error.into()),
+        request: Some(request),
+        response_status: status,
+    }
+}
+
 // ---- TestSuite trait -------------------------------------------------------
 
 #[async_trait]
