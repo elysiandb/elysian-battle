@@ -8,6 +8,12 @@ use serde_json::Value;
 ///   send the `edb_session` cookie.
 /// - Every method returns `Result<Response>` — callers (test suites) handle
 ///   status checks and deserialization.
+///
+/// `Clone` is cheap: `reqwest::Client` is internally reference-counted and
+/// all clones share the same cookie jar, which lets crash-recovery /
+/// edge-case suites spawn concurrent requests from multiple tasks without
+/// re-authenticating.
+#[derive(Clone)]
 pub struct ElysianClient {
     http: Client,
     base_url: String,
@@ -85,6 +91,14 @@ impl ElysianClient {
 
     pub async fn save(&self) -> Result<Response> {
         let req = self.http.post(self.url("/save"));
+        Ok(self.apply_auth(req).send().await?)
+    }
+
+    /// Raw GET against an arbitrary path — used by the edge-case suite to
+    /// test trailing-slash equivalence (`/api/{entity}` vs `/api/{entity}/`),
+    /// which the typed helpers normalize away.
+    pub async fn raw_get(&self, path: &str) -> Result<Response> {
+        let req = self.http.get(self.url(path));
         Ok(self.apply_auth(req).send().await?)
     }
 

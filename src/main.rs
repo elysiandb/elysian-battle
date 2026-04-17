@@ -106,7 +106,38 @@ async fn run(cli: Cli) -> Result<()> {
 
     let all_suites = suites::all_suites(ports.tcp_port);
     let runner = runner::Runner::new(all_suites, cli.parse_suites());
-    let battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
+    let mut battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
+
+    // Step 11b — Crash recovery suite runs outside the Runner because it
+    // needs a mutable `ElysianInstance` reference (kill_hard + restart).
+    // The runner's --suite filter is honored via `should_run`, so
+    // `--suite crash_recovery` still works end-to-end.
+    if runner.should_run("Crash Recovery") {
+        println!();
+        let result = suites::crash_recovery::run_crash_recovery(&mut instance, &http_client).await;
+        let (passed, failed) = summarize_suite(&result);
+        if failed > 0 {
+            println!(
+                "  {} {} — {}/{} passed, {} failed ({:.1}s)",
+                style("✗").red(),
+                result.name,
+                passed,
+                result.tests.len(),
+                failed,
+                result.duration.as_secs_f64()
+            );
+        } else {
+            println!(
+                "  {} {} — {}/{} passed ({:.1}s)",
+                style("✓").green(),
+                result.name,
+                passed,
+                result.tests.len(),
+                result.duration.as_secs_f64()
+            );
+        }
+        runner::append_suite_result(&mut battle_report, result);
+    }
 
     // Step 12 — Stop ElysianDB
     if !cli.keep_alive {
@@ -126,6 +157,24 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Count passed / failed tests in a single `SuiteResult`. Mirrors the
+/// progress-line formatting the runner uses for registered suites so the
+/// crash-recovery output reads the same way.
+fn summarize_suite(result: &suites::SuiteResult) -> (usize, usize) {
+    use suites::TestStatus;
+    let passed = result
+        .tests
+        .iter()
+        .filter(|t| matches!(t.status, TestStatus::Passed))
+        .count();
+    let failed = result
+        .tests
+        .iter()
+        .filter(|t| matches!(t.status, TestStatus::Failed))
+        .count();
+    (passed, failed)
 }
 
 /// Quick smoke test exercising both clients against the live ElysianDB instance.

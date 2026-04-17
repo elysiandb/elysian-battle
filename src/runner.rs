@@ -123,7 +123,7 @@ impl Runner {
     }
 
     /// Check whether a suite name matches the `--suite` filter.
-    fn should_run(&self, suite_name: &str) -> bool {
+    pub fn should_run(&self, suite_name: &str) -> bool {
         match &self.suite_filter {
             None => true,
             Some(filter) => {
@@ -174,6 +174,21 @@ async fn cleanup_between_suites(client: &ElysianClient) {
     for entity in BATTLE_ENTITIES {
         let _ = client.delete_all(entity).await;
     }
+}
+
+/// Append a suite result to an existing `BattleReport` and re-derive the
+/// aggregate pass/fail/skipped counters. Used by the main orchestrator to
+/// fold in the crash-recovery suite, which runs outside `Runner::run`
+/// because it needs a mutable `ElysianInstance` reference that the
+/// `TestSuite` trait does not carry.
+pub fn append_suite_result(report: &mut BattleReport, extra: SuiteResult) {
+    let extra_duration = extra.duration;
+    report.suites.push(extra);
+    let (p, f, s) = count_totals(&report.suites);
+    report.total_passed = p;
+    report.total_failed = f;
+    report.total_skipped = s;
+    report.total_duration += extra_duration;
 }
 
 fn count_totals(suites: &[SuiteResult]) -> (u64, u64, u64) {

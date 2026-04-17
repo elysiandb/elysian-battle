@@ -8,7 +8,9 @@ use crate::client::ElysianClient;
 
 mod acl;
 mod auth;
+pub mod crash_recovery;
 mod crud;
+mod edge_cases;
 mod health;
 mod hooks;
 mod import_export;
@@ -172,10 +174,13 @@ pub const BATTLE_ENTITIES: &[&str] = &[
     "battle_users_nested",
     "battle_migrate_test",
     "battle_edge_unicode",
-    "battle_edge_long",
+    "battle_edge_string",
     "battle_edge_deep",
+    "battle_edge_array",
     "battle_edge_concurrent",
-    "battle_edge_precision",
+    "battle_edge_dup",
+    "battle_edge_types",
+    "battle_edge_slash",
     "battle_crash_data",
     "battle_perf_items",
     "battle_smoke",
@@ -211,6 +216,10 @@ pub fn all_suites(tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
         Box::new(import_export::ImportExportSuite),
         Box::new(hooks::HooksSuite),
         Box::new(migrations::MigrationsSuite),
+        // EdgeCasesSuite must run BEFORE TcpSuite: TCP-06's RESET wipes
+        // the admin account, leaving no authenticated context for the
+        // entity-heavy edge-case tests.
+        Box::new(edge_cases::EdgeCasesSuite),
         Box::new(tcp::TcpSuite::new(tcp_port)),
     ]
 }
@@ -262,7 +271,7 @@ mod tests {
         // (see its docs) — any non-zero value works for this static
         // registration check.
         let suites = all_suites(1);
-        assert_eq!(suites.len(), 14);
+        assert_eq!(suites.len(), 15);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
         assert_eq!(suites[2].name(), "Query API");
@@ -276,6 +285,7 @@ mod tests {
         assert_eq!(suites[10].name(), "Import Export");
         assert_eq!(suites[11].name(), "Hooks");
         assert_eq!(suites[12].name(), "Migrations");
-        assert_eq!(suites[13].name(), "TCP Protocol");
+        assert_eq!(suites[13].name(), "Edge Cases");
+        assert_eq!(suites[14].name(), "TCP Protocol");
     }
 }
