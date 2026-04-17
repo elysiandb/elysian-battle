@@ -246,7 +246,10 @@ mod tests {
 
     #[test]
     fn all_suites_includes_registered_suites() {
-        let suites = all_suites(0);
+        // Non-zero port because TcpSuite::new debug_asserts against 0
+        // (see its docs) — any non-zero value works for this static
+        // registration check.
+        let suites = all_suites(1);
         assert_eq!(suites.len(), 11);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");

@@ -17,24 +17,36 @@
 //!     which writes `(*results)[i] = data`), while on a miss it's
 //!     `key=not found`. The client reads one line per requested key.
 //!   - `DEL key` → `Deleted N`
-//!   - `RESET` → `OK` (but see the TCP-06 note below)
+//!   - `RESET` → `OK` (destructive — see the TCP-06 placement note below)
 //!   - `SAVE` → `OK`
 //!
-//! ## TCP-06 RESET — intentionally skipped
+//! ## TCP-06 RESET — destructive, ordering-dependent
 //!
 //! `RESET` invokes `storage.ResetStore()`, which wipes the entire
 //! in-memory KV store — including every `_elysiandb_core_user:*` record
 //! (so the default `admin` account disappears), every ACL grant, and
 //! every active session cookie. `security.InitAdminUserIfNotExists`
 //! only runs at process boot (`elysiandb.go:main`), so nothing inside
-//! the live process restores admin after a RESET. That leaves every
-//! subsequent harness suite unable to authenticate and produces a
-//! cascade of false-negative failures that have nothing to do with the
-//! feature under test.
+//! the live process restores admin after a RESET.
 //!
-//! We report TCP-06 as `Skipped` with that reason. A future iteration
-//! could run RESET and then trigger an instance restart through the
-//! crash-recovery machinery; that's out of scope for this ticket.
+//! We can still exercise the command because:
+//!
+//!   1. The TCP protocol layer has no auth middleware
+//!      (`boot/tcp.go:handleConnection` dispatches straight to
+//!      `RouteLine`), so every TCP test remaining in the suite works
+//!      on a wiped store.
+//!   2. `TcpSuite` is registered LAST in `all_suites()` among the
+//!      auth-dependent functional suites, and the runner does no
+//!      admin-gated work after the final suite returns — `instance.stop`
+//!      just sends a signal to the process.
+//!   3. The Crash Recovery suite (future — ticket #12+) will restart the
+//!      ElysianDB process, which re-runs `InitAdminUserIfNotExists` and
+//!      re-creates the default admin from scratch.
+//!
+//! **If you add a new auth-gated suite, register it BEFORE `TcpSuite`
+//! in `all_suites()`** — otherwise its `setup`/cleanup path will hit an
+//! empty store. The suite-count unit test pins `TcpSuite` at the last
+//! index to catch accidental reordering.
 
 use std::time::{Duration, Instant};
 
@@ -42,17 +54,20 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::client::ElysianClient;
-use crate::suites::{fail, pass, TestResult, TestStatus, TestSuite};
+use crate::suites::{fail, pass, TestResult, TestSuite};
 use crate::tcp_client::ElysianTcpClient;
 
 /// Every key this suite sets over TCP. Used by setup/teardown for
-/// idempotent cleanup via `DEL`.
+/// idempotent cleanup via `DEL`. `battle_tcp_nonexistent` is listed
+/// as a defensive measure only — TCP-08 never writes it, but DEL on a
+/// missing key is a no-op so this stays safe.
 const TCP_KEYS: &[&str] = &[
     "battle_tcp_k1",
     "battle_tcp_ttl",
     "battle_tcp_m1",
     "battle_tcp_m2",
     "battle_tcp_m3",
+    "battle_tcp_reset_sentinel",
     "battle_tcp_save",
     "battle_tcp_nonexistent",
 ];
@@ -63,6 +78,16 @@ pub struct TcpSuite {
 
 impl TcpSuite {
     pub fn new(tcp_port: u16) -> Self {
+        // Port `0` never lands in runtime — the harness picks a real
+        // port via `port::find_available_ports()` before constructing
+        // the suite. `debug_assert!` catches accidental `all_suites(0)`
+        // callers in debug builds while staying out of the release path.
+        // The `all_suites` unit test passes a non-zero placeholder to
+        // respect this invariant.
+        debug_assert!(
+            tcp_port != 0,
+            "TcpSuite built with port 0 — did the runner forget to pass a live port?"
+        );
         Self { tcp_port }
     }
 }
@@ -92,7 +117,7 @@ impl TestSuite for TcpSuite {
         results.push(tcp03_set_with_ttl(&suite, port).await);
         results.push(tcp04_mget(&suite, port).await);
         results.push(tcp05_del(&suite, port).await);
-        results.push(tcp06_reset_skipped(&suite));
+        results.push(tcp06_reset(&suite, port).await);
         results.push(tcp07_save(&suite, port).await);
         results.push(tcp08_get_non_existent(&suite, port).await);
 
@@ -542,23 +567,108 @@ async fn tcp05_del(suite: &str, port: u16) -> TestResult {
     }
 }
 
-// TCP-06 — RESET. Intentionally skipped.
+// TCP-06 — RESET returns OK and actually clears the store.
 //
-// See the suite-level docs for the full rationale: RESET is destructive
-// to the admin session, the admin user record, and every ACL grant, so
-// running it here would wreck authentication for every suite that
-// follows.
-fn tcp06_reset_skipped(suite: &str) -> TestResult {
-    TestResult {
-        suite: suite.to_string(),
-        name: "TCP-06 RESET".to_string(),
-        status: TestStatus::Skipped,
-        duration: Duration::ZERO,
-        error: Some(
-            "RESET wipes admin user + session + ACL grants — would cascade-fail every subsequent suite. See suite-level docs.".to_string(),
-        ),
-        request: Some("RESET".to_string()),
-        response_status: None,
+// Seed a sentinel key, call RESET, verify it responds `OK`, then confirm
+// the sentinel is gone. Safe to run here because TCP-06 is the last
+// auth-sensitive thing the harness does (see suite-level docs for the
+// ordering contract this relies on).
+async fn tcp06_reset(suite: &str, port: u16) -> TestResult {
+    let name = "TCP-06 RESET";
+    let sentinel = "battle_tcp_reset_sentinel";
+    let request = format!("SET {sentinel} + RESET + GET {sentinel}");
+    let start = Instant::now();
+
+    let mut tcp = match ElysianTcpClient::connect(port).await {
+        Ok(c) => c,
+        Err(e) => {
+            return fail(
+                suite,
+                name,
+                request,
+                None,
+                start.elapsed(),
+                format!("TCP connect failed: {e:#}"),
+            )
+        }
+    };
+
+    // Seed a sentinel so the "all keys cleared" assertion has something
+    // concrete to disappear.
+    let set_resp = match tcp.set(sentinel, "present").await {
+        Ok(r) => r,
+        Err(e) => {
+            return fail(
+                suite,
+                name,
+                request,
+                None,
+                start.elapsed(),
+                format!("seed SET failed: {e:#}"),
+            )
+        }
+    };
+    if set_resp != "OK" {
+        return fail(
+            suite,
+            name,
+            request,
+            None,
+            start.elapsed(),
+            format!("seed SET expected \"OK\", got \"{set_resp}\""),
+        );
+    }
+
+    let reset_resp = match tcp.reset().await {
+        Ok(r) => r,
+        Err(e) => {
+            return fail(
+                suite,
+                name,
+                request,
+                None,
+                start.elapsed(),
+                format!("RESET failed: {e:#}"),
+            )
+        }
+    };
+    if reset_resp != "OK" {
+        return fail(
+            suite,
+            name,
+            request,
+            None,
+            start.elapsed(),
+            format!("RESET expected \"OK\", got \"{reset_resp}\""),
+        );
+    }
+
+    let get_resp = match tcp.get(sentinel).await {
+        Ok(r) => r,
+        Err(e) => {
+            return fail(
+                suite,
+                name,
+                request,
+                None,
+                start.elapsed(),
+                format!("post-RESET GET failed: {e:#}"),
+            )
+        }
+    };
+    let duration = start.elapsed();
+
+    if parse_get_response(&get_resp, sentinel).is_none() {
+        pass(suite, name, request, None, duration)
+    } else {
+        fail(
+            suite,
+            name,
+            request,
+            None,
+            duration,
+            format!("sentinel survived RESET: \"{get_resp}\""),
+        )
     }
 }
 

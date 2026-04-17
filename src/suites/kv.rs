@@ -35,10 +35,13 @@ use serde_json::Value;
 use crate::client::ElysianClient;
 use crate::suites::{fail, pass, TestResult, TestSuite};
 
-/// Every key this suite sets. Used by setup/teardown for idempotent cleanup.
-///
-/// The special-chars key (KV-08) is listed here in its decoded form — the
-/// cleanup path percent-encodes it on the fly.
+/// Every key this suite touches. Used by setup/teardown for idempotent
+/// cleanup. Includes `battle_kv_nope` — KV-03 never writes it, but a
+/// DELETE on a missing key is a harmless 204 and keeping the list as
+/// "every key whose name could leak across runs" is simpler than
+/// tracking write vs. read-only keys separately. The special-chars key
+/// (KV-08) is listed in its decoded form — the cleanup path
+/// percent-encodes it on the fly.
 const KV_KEYS: &[&str] = &[
     "battle_kv_key1",
     "battle_kv_ttl",
@@ -337,6 +340,12 @@ async fn kv02_set_with_ttl(suite: &str, client: &ElysianClient) -> TestResult {
 }
 
 // KV-03 — GET of a key that was never set returns empty / 404.
+//
+// Accepts either `status == 404` OR a 200 with `value: null` to stay
+// forward-compatible: v0.1.14 always returns 404 today, but the spec
+// language ("Empty or 404") permits both. KV-02 and KV-05 use the same
+// dual-acceptance rule for consistency — see KV-08 for the broader
+// "Works or clear error" rationale.
 async fn kv03_get_non_existent(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "KV-03 Get non-existent";
     let key = "battle_kv_nope";
