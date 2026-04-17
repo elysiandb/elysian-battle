@@ -94,7 +94,7 @@ impl TestSuite for AuthSuite {
         let mut results = Vec::with_capacity(15);
 
         results.push(a01_unauthenticated_request(&suite, port).await);
-        results.push(a02_token_auth_valid(&suite, port).await);
+        results.push(a02_token_auth_valid(&suite).await);
         results.push(a03_token_auth_invalid(&suite, port).await);
         results.push(a04_login_default_admin(&suite, port).await);
         results.push(a05_session_cookie_works(&suite, client).await);
@@ -193,7 +193,7 @@ async fn a01_unauthenticated_request(suite: &str, port: u16) -> TestResult {
 // suites need session cookies), so this test is reported as `Skipped` with
 // a reason rather than forced to fail against a config it was never going
 // to match.
-async fn a02_token_auth_valid(suite: &str, _port: u16) -> TestResult {
+async fn a02_token_auth_valid(suite: &str) -> TestResult {
     let name = "A-02 Token auth (valid)";
     let request = format!("GET /api/{PROBE_ENTITY} (Bearer {BATTLE_TOKEN})");
     TestResult {
@@ -907,18 +907,39 @@ async fn a14_cannot_delete_default_admin(suite: &str, client: &ElysianClient) ->
     let vstatus = verify.status().as_u16();
     let duration = start.elapsed();
 
-    if vstatus == 200 {
-        pass(suite, name, request, Some(delete_status), duration)
-    } else {
-        fail(
+    // Primary assertion: the admin user must still exist.
+    if vstatus != 200 {
+        return fail(
             suite,
             name,
             request,
             Some(vstatus),
             duration,
             format!("admin must survive delete attempt, but get_user returned {vstatus}"),
-        )
+        );
     }
+
+    // Secondary assertion: pin the v0.1.14 no-op status (200) so this
+    // test trips loudly when ElysianDB is fixed to return 400/403 as the
+    // spec describes. On that day, the quirk documented in the module
+    // header becomes stale and a reviewer should update both the comment
+    // and this assertion.
+    if delete_status != 200 {
+        return fail(
+            suite,
+            name,
+            request,
+            Some(delete_status),
+            duration,
+            format!(
+                "expected 200 (v0.1.14 silently no-ops admin-delete); got {delete_status}. \
+                 ElysianDB may have been fixed — update the A-14 comment and this assertion \
+                 to match the new spec-compliant 400/403 response."
+            ),
+        );
+    }
+
+    pass(suite, name, request, Some(delete_status), duration)
 }
 
 // A-15 — Login with wrong password returns 401.

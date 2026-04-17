@@ -54,6 +54,14 @@ const ACL_USERNAME: &str = "battle_acl_user";
 const ACL_PASSWORD: &str = "acl-pass-2026";
 const ACL_ENTITY: &str = "battle_acl_data";
 
+/// Ordered list of every test id in this suite. Used by the setup-failure
+/// branches in `run()` to emit one placeholder failure per test, keeping
+/// the two error paths in sync when tests are added/removed.
+const ACL_TEST_IDS: &[&str] = &[
+    "ACL-01", "ACL-02", "ACL-03", "ACL-04", "ACL-05", "ACL-06", "ACL-07", "ACL-08", "ACL-09",
+    "ACL-10",
+];
+
 pub struct AclSuite;
 
 #[async_trait]
@@ -83,10 +91,7 @@ impl TestSuite for AclSuite {
         if let Err(msg) = seed_user_and_entity(client).await {
             // Every test returns the same setup failure — there is no
             // point running them against a half-built fixture.
-            for id in [
-                "ACL-01", "ACL-02", "ACL-03", "ACL-04", "ACL-05", "ACL-06", "ACL-07", "ACL-08",
-                "ACL-09", "ACL-10",
-            ] {
+            for id in ACL_TEST_IDS {
                 results.push(fail(
                     &suite,
                     &format!("{id} Setup failed"),
@@ -104,10 +109,7 @@ impl TestSuite for AclSuite {
         let user_client = match new_user_client(port).await {
             Ok(c) => c,
             Err(msg) => {
-                for id in [
-                    "ACL-01", "ACL-02", "ACL-03", "ACL-04", "ACL-05", "ACL-06", "ACL-07", "ACL-08",
-                    "ACL-09", "ACL-10",
-                ] {
+                for id in ACL_TEST_IDS {
                     results.push(fail(
                         &suite,
                         &format!("{id} User login failed"),
@@ -123,7 +125,7 @@ impl TestSuite for AclSuite {
 
         results.push(acl01_admin_full_access(&suite, client).await);
         results.push(acl02_user_can_create(&suite, &user_client).await);
-        results.push(acl03_user_can_read_own(&suite, &user_client).await);
+        results.push(acl03_user_can_read_own(&suite, client, &user_client).await);
         results.push(acl04_user_cannot_read_others(&suite, client, &user_client).await);
         results.push(acl05_grant_global_read(&suite, client, &user_client).await);
         results.push(acl06_get_acl(&suite, client).await);
@@ -136,6 +138,15 @@ impl TestSuite for AclSuite {
     }
 
     async fn teardown(&self, client: &ElysianClient) -> Result<()> {
+        // IMPORTANT: do NOT `logout()` or otherwise invalidate the shared
+        // `client`'s admin session here — the runner reuses this client
+        // across suites and `cleanup_between_suites` swallows 401s
+        // silently (`let _ = client.delete_all(...)`), so a stale session
+        // would turn into invisible cleanup failures in whatever suite
+        // runs next. If a future ACL test needs to log out or delete the
+        // admin session's owner, re-establish admin via
+        // `client.login("admin", "admin")` before returning from
+        // teardown (see `auth.rs::ensure_admin_logged_in` for the idiom).
         let _ = client.delete_all(ACL_ENTITY).await;
         let _ = client.delete_user(ACL_USERNAME).await;
         Ok(())
@@ -146,61 +157,67 @@ impl TestSuite for AclSuite {
 // Setup helpers
 // ---------------------------------------------------------------------------
 
-/// Permission flag pair passed to `perms_body` below. One `Perms` covers
-/// the four global permissions, another covers the four owning ones.
+/// Global-scope permissions (the four unprefixed ACL keys).
 #[derive(Clone, Copy)]
-struct Perms {
-    create_or_read: bool,
-    read_or_write: bool,
+struct GlobalPerms {
+    create: bool,
+    read: bool,
     update: bool,
     delete: bool,
 }
 
-/// Full permissions map that the ACL PUT endpoint wants — every known key
+/// Owning-scope permissions (the four `owning_*` ACL keys).
+#[derive(Clone, Copy)]
+struct OwningPerms {
+    read: bool,
+    write: bool,
+    update: bool,
+    delete: bool,
+}
+
+/// Full permissions map the ACL PUT endpoint wants — every known key
 /// explicitly set so callers never accidentally zero a perm they wanted to
-/// preserve (see quirk #2 in the module docs). `global` holds
-/// `(create, read, update, delete)`; `owning` holds
-/// `(owning_read, owning_write, owning_update, owning_delete)`.
-fn perms_body(global: Perms, owning: Perms) -> Value {
+/// preserve (see quirk #2 in the module docs).
+fn perms_body(global: GlobalPerms, owning: OwningPerms) -> Value {
     json!({
         "permissions": {
-            "create":        global.create_or_read,
-            "read":          global.read_or_write,
+            "create":        global.create,
+            "read":          global.read,
             "update":        global.update,
             "delete":        global.delete,
-            "owning_read":   owning.create_or_read,
-            "owning_write":  owning.read_or_write,
+            "owning_read":   owning.read,
+            "owning_write":  owning.write,
             "owning_update": owning.update,
             "owning_delete": owning.delete,
         }
     })
 }
 
-const ALL_FALSE: Perms = Perms {
-    create_or_read: false,
-    read_or_write: false,
+const NO_GLOBAL: GlobalPerms = GlobalPerms {
+    create: false,
+    read: false,
     update: false,
     delete: false,
 };
 
-const ALL_TRUE: Perms = Perms {
-    create_or_read: true,
-    read_or_write: true,
+const READ_ONLY_GLOBAL: GlobalPerms = GlobalPerms {
+    create: false,
+    read: true,
+    update: false,
+    delete: false,
+};
+
+const FULL_OWNING: OwningPerms = OwningPerms {
+    read: true,
+    write: true,
     update: true,
     delete: true,
-};
-
-const READ_ONLY_GLOBAL: Perms = Perms {
-    create_or_read: false,
-    read_or_write: true,
-    update: false,
-    delete: false,
 };
 
 /// `{owning_* : true, global_* : false}` — the set we use to simulate a
 /// role=user ACL even though the underlying user is technically role=admin.
 fn owning_only() -> Value {
-    perms_body(ALL_FALSE, ALL_TRUE)
+    perms_body(NO_GLOBAL, FULL_OWNING)
 }
 
 /// Create the test user and seed a document owned by admin. The seed doc
@@ -261,8 +278,23 @@ async fn bust_cache(admin: &ElysianClient) -> Result<(), String> {
         .json()
         .await
         .map_err(|e| format!("cache-bust JSON parse failed: {e:#}"))?;
-    if let Some(id) = body.get("id").and_then(|v| v.as_str()) {
-        let _ = admin.delete(ACL_ENTITY, id).await;
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("cache-bust response missing id: {body}"))?;
+    // Errors here are fatal: a surviving sentinel would appear as an
+    // admin-owned doc in the entity and silently turn ACL-04/ACL-08 into
+    // false positives ("no admin docs visible" would be wrong because the
+    // leftover sentinel IS admin-owned).
+    let delete_resp = admin
+        .delete(ACL_ENTITY, id)
+        .await
+        .map_err(|e| format!("cache-bust delete failed: {e:#}"))?;
+    if !delete_resp.status().is_success() {
+        return Err(format!(
+            "cache-bust delete for id={id} returned {}",
+            delete_resp.status().as_u16()
+        ));
     }
     Ok(())
 }
@@ -482,14 +514,43 @@ async fn acl02_user_can_create(suite: &str, user: &ElysianClient) -> TestResult 
 //
 // Resets the user ACL to owning-only first so the check actually exercises
 // the `owning_read` branch of `CanReadEntity` rather than the default
-// admin-role `read` grant.
-async fn acl03_user_can_read_own(suite: &str, user: &ElysianClient) -> TestResult {
+// admin-role `read` grant. Without this step, the test would pass even if
+// `CanReadEntity`'s owning-branch regressed, because the default admin-role
+// ACL (see module docs, quirk #1) grants full `read`.
+async fn acl03_user_can_read_own(
+    suite: &str,
+    admin: &ElysianClient,
+    user: &ElysianClient,
+) -> TestResult {
     let name = "ACL-03 User can read own";
     let request = format!("GET /api/{ACL_ENTITY}/{{user_doc_id}}");
     let start = Instant::now();
 
-    // Find the user's doc by listing via the user client (should include
-    // owned docs even under owning-read).
+    // Restrict to owning-only so the list filter and per-id ACL check both
+    // go through the owning branches.
+    if let Err(e) = admin.set_acl(ACL_USERNAME, ACL_ENTITY, owning_only()).await {
+        return fail(
+            suite,
+            name,
+            request,
+            None,
+            start.elapsed(),
+            format!("set_acl (owning_only) failed: {e:#}"),
+        );
+    }
+    if let Err(msg) = bust_cache(admin).await {
+        return fail(
+            suite,
+            name,
+            request,
+            None,
+            start.elapsed(),
+            format!("bust_cache failed: {msg}"),
+        );
+    }
+
+    // Find the user's doc by listing via the user client — under
+    // owning-only the list is filtered to docs the user owns.
     let resp = match user.list(ACL_ENTITY, &[]).await {
         Ok(r) => r,
         Err(e) => {
@@ -668,7 +729,7 @@ async fn acl05_grant_global_read(
     // `read:true` dominates the ACL so the user sees every doc; owning
     // perms stay on so subsequent tests can reset back to owning-only
     // without granting writes the user never had.
-    let body = perms_body(READ_ONLY_GLOBAL, ALL_TRUE);
+    let body = perms_body(READ_ONLY_GLOBAL, FULL_OWNING);
     let resp = match admin.set_acl(ACL_USERNAME, ACL_ENTITY, body).await {
         Ok(r) => r,
         Err(e) => {
@@ -985,7 +1046,9 @@ async fn acl08_revoke_permission(
             format!("admin docs still visible after revoke: {docs:?}"),
         )
     } else {
-        pass(suite, name, request, Some(status), duration)
+        // Report the user-list status on both branches so the pass/fail
+        // reports stay consistent with ACL-04 and ACL-05.
+        pass(suite, name, request, Some(lstatus), duration)
     }
 }
 
