@@ -10,10 +10,13 @@ mod acl;
 mod auth;
 mod crud;
 mod health;
+mod kv;
 mod nested;
 mod query;
 mod query_params;
 mod schema;
+mod tcp;
+mod transactions;
 
 // ---- Status & result types ------------------------------------------------
 
@@ -184,7 +187,7 @@ pub const BATTLE_ENTITIES: &[&str] = &[
 ///   3. Performance (metrics-only, not pass/fail)
 ///
 /// Individual suite implementations are added in subsequent tickets.
-pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
+pub fn all_suites(tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
     vec![
         Box::new(health::HealthSuite),
         Box::new(crud::CrudSuite),
@@ -194,6 +197,9 @@ pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
         Box::new(schema::SchemaSuite),
         Box::new(auth::AuthSuite),
         Box::new(acl::AclSuite),
+        Box::new(transactions::TransactionsSuite),
+        Box::new(kv::KvSuite),
+        Box::new(tcp::TcpSuite::new(tcp_port)),
     ]
 }
 
@@ -240,8 +246,11 @@ mod tests {
 
     #[test]
     fn all_suites_includes_registered_suites() {
-        let suites = all_suites(0);
-        assert_eq!(suites.len(), 8);
+        // Non-zero port because TcpSuite::new debug_asserts against 0
+        // (see its docs) — any non-zero value works for this static
+        // registration check.
+        let suites = all_suites(1);
+        assert_eq!(suites.len(), 11);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
         assert_eq!(suites[2].name(), "Query API");
@@ -250,5 +259,8 @@ mod tests {
         assert_eq!(suites[5].name(), "Schema");
         assert_eq!(suites[6].name(), "Authentication");
         assert_eq!(suites[7].name(), "ACL");
+        assert_eq!(suites[8].name(), "Transactions");
+        assert_eq!(suites[9].name(), "KV Store");
+        assert_eq!(suites[10].name(), "TCP Protocol");
     }
 }
