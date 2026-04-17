@@ -8,6 +8,8 @@ use crate::client::ElysianClient;
 
 mod crud;
 mod health;
+mod query;
+mod query_params;
 
 // ---- Status & result types ------------------------------------------------
 
@@ -128,7 +130,12 @@ pub const BATTLE_ENTITIES: &[&str] = &[
 ///
 /// Individual suite implementations are added in subsequent tickets.
 pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
-    vec![Box::new(health::HealthSuite), Box::new(crud::CrudSuite)]
+    vec![
+        Box::new(health::HealthSuite),
+        Box::new(crud::CrudSuite),
+        Box::new(query::QuerySuite),
+        Box::new(query_params::QueryParamsSuite),
+    ]
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -173,10 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn all_suites_includes_health_and_crud() {
+    fn all_suites_includes_registered_suites() {
         let suites = all_suites(0);
-        assert_eq!(suites.len(), 2);
+        assert_eq!(suites.len(), 4);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
+        assert_eq!(suites[2].name(), "Query API");
+        assert_eq!(suites[3].name(), "URL Query Parameters");
     }
 }
