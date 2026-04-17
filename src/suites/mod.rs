@@ -10,7 +10,10 @@ mod acl;
 mod auth;
 mod crud;
 mod health;
+mod hooks;
+mod import_export;
 mod kv;
+mod migrations;
 mod nested;
 mod query;
 mod query_params;
@@ -161,6 +164,7 @@ pub const BATTLE_ENTITIES: &[&str] = &[
     "battle_tx_items",
     "battle_export_test",
     "battle_hooked_entity",
+    "battle_hook_related",
     "battle_posts",
     "battle_authors_nested",
     "battle_jobs_nested",
@@ -199,6 +203,14 @@ pub fn all_suites(tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
         Box::new(acl::AclSuite),
         Box::new(transactions::TransactionsSuite),
         Box::new(kv::KvSuite),
+        // Import/Export, Hooks, and Migrations all rely on authenticated
+        // admin access (Hooks in particular is admin-gated). They must run
+        // BEFORE TcpSuite — TCP-06 issues `RESET`, which wipes the admin
+        // account, every ACL grant, and every session cookie (see the
+        // ordering note atop `tcp.rs`).
+        Box::new(import_export::ImportExportSuite),
+        Box::new(hooks::HooksSuite),
+        Box::new(migrations::MigrationsSuite),
         Box::new(tcp::TcpSuite::new(tcp_port)),
     ]
 }
@@ -250,7 +262,7 @@ mod tests {
         // (see its docs) — any non-zero value works for this static
         // registration check.
         let suites = all_suites(1);
-        assert_eq!(suites.len(), 11);
+        assert_eq!(suites.len(), 14);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
         assert_eq!(suites[2].name(), "Query API");
@@ -261,6 +273,9 @@ mod tests {
         assert_eq!(suites[7].name(), "ACL");
         assert_eq!(suites[8].name(), "Transactions");
         assert_eq!(suites[9].name(), "KV Store");
-        assert_eq!(suites[10].name(), "TCP Protocol");
+        assert_eq!(suites[10].name(), "Import Export");
+        assert_eq!(suites[11].name(), "Hooks");
+        assert_eq!(suites[12].name(), "Migrations");
+        assert_eq!(suites[13].name(), "TCP Protocol");
     }
 }
