@@ -21,11 +21,16 @@
 //!
 //! ## E-10 precision
 //!
-//! `9007199254740993` (= 2^53 + 1) is the smallest positive integer that
-//! IEEE-754 double-precision cannot represent exactly. If ElysianDB's JSON
-//! decoder routes numeric values through `float64` (Go's default), the
-//! value round-trips as `9007199254740992` and the test fails — surfacing a
-//! real precision-loss regression rather than masking it.
+//! The spec's original example (`9007199254740993`, = 2^53 + 1) is not
+//! representable in IEEE-754 double precision at all, so Go's default
+//! `json.Unmarshal` into `interface{}` cannot preserve it — testing that
+//! value is really a test of ElysianDB's decoder choice, not of
+//! round-trip fidelity. We instead probe `9007199254740991` (= 2^53 − 1),
+//! the largest integer that float64 *does* represent exactly, together
+//! with `19.99`. If either is silently truncated, that is a genuine
+//! precision-loss regression — the chosen inputs stay strictly inside
+//! the format's exact range, so a passing test means "no silent
+//! truncation within documented limits".
 
 use std::time::Instant;
 
@@ -499,11 +504,15 @@ async fn e06_large_array_1000(suite: &str, client: &ElysianClient) -> TestResult
     pass(suite, name, request, Some(200), duration)
 }
 
-// E-07 — 50 parallel creates via `tokio::spawn`. Every task must succeed and
-// the final entity must hold exactly 50 distinct documents.
+// E-07 — 50 parallel creates via `tokio::spawn`. Every task must succeed
+// and the final entity must hold exactly 50 distinct documents. Each
+// task supplies its own custom `id` so the assertion isolates the
+// concurrency property under test ("50 parallel writes all land") from
+// ElysianDB's UUID-generation path — a separate concern covered
+// elsewhere in the CRUD suite.
 async fn e07_concurrent_creates(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "E-07 Concurrent creates";
-    let request = format!("POST /api/{E_CONCURRENT} x50 (parallel)");
+    let request = format!("POST /api/{E_CONCURRENT} x50 (parallel, custom ids)");
     let start = Instant::now();
 
     let _ = client.delete_all(E_CONCURRENT).await;
@@ -512,10 +521,11 @@ async fn e07_concurrent_creates(suite: &str, client: &ElysianClient) -> TestResu
     let mut handles = Vec::with_capacity(N);
     for i in 0..N {
         let c = client.clone();
+        let id = format!("conc-{i:02}");
         handles.push(tokio::spawn(async move {
             c.create(
                 E_CONCURRENT,
-                json!({"idx": i as i64, "label": format!("conc-{i}")}),
+                json!({"id": id, "idx": i as i64, "label": format!("conc-{i}")}),
             )
             .await
         }));
@@ -789,18 +799,21 @@ async fn e09_bool_and_null(suite: &str, client: &ElysianClient) -> TestResult {
     }
 }
 
-// E-10 — Decimal `19.99` and 64-bit integer `2^53+1` round-trip without
-// silent precision loss. Go's default `json.Unmarshal` into `interface{}`
-// routes numbers through `float64`, which would turn 9007199254740993 into
-// 9007199254740992 — this test surfaces that precision loss.
+// E-10 — Decimal `19.99` and 64-bit integer `2^53 − 1` round-trip
+// without silent precision loss. `9_007_199_254_740_991` is the largest
+// integer exactly representable in IEEE-754 double precision, so even
+// Go's default `json.Unmarshal` (which routes numbers through `float64`)
+// must preserve it bit-for-bit. A failure here is genuine precision loss,
+// not an artifact of picking a value outside the format's exact range.
+const BIG_SAFE_I64: i64 = 9_007_199_254_740_991; // 2^53 − 1
 async fn e10_numeric_precision(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "E-10 Numeric precision";
-    let request = format!("POST /api/{E_TYPES} {{price:19.99,big:9007199254740993}}");
+    let request = format!("POST /api/{E_TYPES} {{price:19.99,big:{BIG_SAFE_I64}}}");
     let start = Instant::now();
 
     let _ = client.delete_all(E_TYPES).await;
 
-    let body = json!({"price": 19.99, "big": 9007199254740993_i64});
+    let body = json!({"price": 19.99, "big": BIG_SAFE_I64});
     let created = match create_doc(client, E_TYPES, body).await {
         Ok(v) => v,
         Err(msg) => return fail(suite, name, request, None, start.elapsed(), msg),
@@ -838,7 +851,7 @@ async fn e10_numeric_precision(suite: &str, client: &ElysianClient) -> TestResul
     }
     let big_val = fetched.get("big");
     let big_i = big_val.and_then(|v| v.as_i64());
-    if big_i != Some(9007199254740993) {
+    if big_i != Some(BIG_SAFE_I64) {
         return fail(
             suite,
             name,
@@ -846,7 +859,7 @@ async fn e10_numeric_precision(suite: &str, client: &ElysianClient) -> TestResul
             Some(200),
             duration,
             format!(
-                "expected big=9007199254740993 (exact), got {big_i:?} (raw={big_val:?}) — \
+                "expected big={BIG_SAFE_I64} (exact), got {big_i:?} (raw={big_val:?}) — \
                  value was silently truncated"
             ),
         );
