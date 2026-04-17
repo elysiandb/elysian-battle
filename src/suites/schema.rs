@@ -145,6 +145,26 @@ async fn reset_manual_schema(client: &ElysianClient, entity: &str) {
         .await;
 }
 
+/// Wipe and re-create both `TYPED` and `TYPED2` so S-09 / S-10 see exactly
+/// the two types they expect, independent of S-07 / S-08 ordering or any
+/// prior suite run that may have left these names registered with a
+/// different schema. Mirrors `reset_manual_schema` semantics: `delete_all`
+/// removes them from the public type list, then `create_entity_type`
+/// re-registers each with a deterministic full-form schema.
+async fn seed_two_types(client: &ElysianClient) {
+    wipe_entity_and_schema(client, TYPED).await;
+    wipe_entity_and_schema(client, TYPED2).await;
+    let _ = client
+        .create_entity_type(TYPED, json!({"fields": {"x": {"type": "string"}}}))
+        .await;
+    let _ = client
+        .create_entity_type(
+            TYPED2,
+            json!({"fields": {"x": {"type": "string", "required": true}}}),
+        )
+        .await;
+}
+
 /// Walk the schema's `fields` map and return the inferred type for `field`.
 /// The full-form representation is `{"<name>": {"name":..., "type":..., ...}}`.
 fn field_type(schema: &Value, field: &str) -> Option<String> {
@@ -335,7 +355,14 @@ async fn s02_type_mismatch_rejected(suite: &str, client: &ElysianClient) -> Test
 // current behavior — or the expected type, so the test stays green either
 // way).
 async fn s03_set_manual_schema_shorthand(suite: &str, client: &ElysianClient) -> TestResult {
-    let name = "S-03 Set manual schema (shorthand)";
+    // Naming reflects the assertion scope — this test pins the OBSERVABLE
+    // endpoint contract for shorthand input (200 + `_manual:true`), not the
+    // semantic outcome of "fields {name:string, age:number} are stored".
+    // Storing those fields requires `MapToFields` to grow shorthand support
+    // server-side (currently silently drops them); the tolerant `name_ok` /
+    // `age_ok` checks below stay green either way so the test does not lie
+    // about what it verifies.
+    let name = "S-03 Set manual schema endpoint contract (shorthand input)";
     let request = format!("PUT /api/{MANUAL}/schema {{fields:{{name:string,age:number}}}}");
     let start = Instant::now();
 
@@ -637,7 +664,11 @@ async fn s06_required_field_missing(suite: &str, client: &ElysianClient) -> Test
 // resulting schema. The shorthand may or may not populate `fields.x` —
 // both outcomes pass.
 async fn s07_create_entity_type_shorthand(suite: &str, client: &ElysianClient) -> TestResult {
-    let name = "S-07 Create entity type (shorthand)";
+    // Same naming policy as S-03: this asserts the observable endpoint
+    // contract (200 + `_manual:true` + entity type registered), tolerating
+    // both the current "shorthand field dropped" behavior and a future
+    // shorthand-aware fix.
+    let name = "S-07 Create entity type endpoint contract (shorthand input)";
     let request = format!("POST /api/{TYPED}/create {{fields:{{x:string}}}}");
     let start = Instant::now();
 
@@ -797,18 +828,7 @@ async fn s09_list_entity_types(suite: &str, client: &ElysianClient) -> TestResul
     let request = "GET /api/entity/types".to_string();
     let start = Instant::now();
 
-    // Recreate both types deterministically — order-independent.
-    wipe_entity_and_schema(client, TYPED).await;
-    wipe_entity_and_schema(client, TYPED2).await;
-    let _ = client
-        .create_entity_type(TYPED, json!({"fields": {"x": {"type": "string"}}}))
-        .await;
-    let _ = client
-        .create_entity_type(
-            TYPED2,
-            json!({"fields": {"x": {"type": "string", "required": true}}}),
-        )
-        .await;
+    seed_two_types(client).await;
 
     let resp = match client.list_entity_types().await {
         Ok(r) => r,
@@ -924,17 +944,7 @@ async fn s10_list_entity_type_names(suite: &str, client: &ElysianClient) -> Test
     let request = "GET /api/entity/types/name".to_string();
     let start = Instant::now();
 
-    wipe_entity_and_schema(client, TYPED).await;
-    wipe_entity_and_schema(client, TYPED2).await;
-    let _ = client
-        .create_entity_type(TYPED, json!({"fields": {"x": {"type": "string"}}}))
-        .await;
-    let _ = client
-        .create_entity_type(
-            TYPED2,
-            json!({"fields": {"x": {"type": "string", "required": true}}}),
-        )
-        .await;
+    seed_two_types(client).await;
 
     let resp = match client.list_entity_type_names().await {
         Ok(r) => r,
