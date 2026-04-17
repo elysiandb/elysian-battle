@@ -11,6 +11,7 @@ use serde_json::Value;
 pub struct ElysianClient {
     http: Client,
     base_url: String,
+    port: u16,
     /// Optional bearer token for token-auth mode tests.
     token: Option<String>,
 }
@@ -26,6 +27,7 @@ impl ElysianClient {
         Self {
             http,
             base_url: format!("http://127.0.0.1:{port}"),
+            port,
             token: None,
         }
     }
@@ -39,6 +41,12 @@ impl ElysianClient {
     /// Clear the bearer token (revert to cookie-only auth).
     pub fn clear_token(&mut self) {
         self.token = None;
+    }
+
+    /// HTTP port this client targets. Used by suites that need to spin up
+    /// a second cookie-isolated client against the same instance.
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     // ------------------------------------------------------------------
@@ -471,6 +479,7 @@ mod tests {
     fn client_builds_correct_base_url() {
         let client = ElysianClient::new(9000);
         assert_eq!(client.base_url, "http://127.0.0.1:9000");
+        assert_eq!(client.port(), 9000);
     }
 
     #[test]

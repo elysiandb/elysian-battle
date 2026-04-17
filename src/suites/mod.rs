@@ -6,6 +6,8 @@ use serde::Serialize;
 
 use crate::client::ElysianClient;
 
+mod acl;
+mod auth;
 mod crud;
 mod health;
 mod nested;
@@ -190,6 +192,8 @@ pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
         Box::new(query_params::QueryParamsSuite),
         Box::new(nested::NestedSuite),
         Box::new(schema::SchemaSuite),
+        Box::new(auth::AuthSuite),
+        Box::new(acl::AclSuite),
     ]
 }
 
@@ -237,12 +241,14 @@ mod tests {
     #[test]
     fn all_suites_includes_registered_suites() {
         let suites = all_suites(0);
-        assert_eq!(suites.len(), 6);
+        assert_eq!(suites.len(), 8);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
         assert_eq!(suites[2].name(), "Query API");
         assert_eq!(suites[3].name(), "URL Query Parameters");
         assert_eq!(suites[4].name(), "Nested Entities");
         assert_eq!(suites[5].name(), "Schema");
+        assert_eq!(suites[6].name(), "Authentication");
+        assert_eq!(suites[7].name(), "ACL");
     }
 }
