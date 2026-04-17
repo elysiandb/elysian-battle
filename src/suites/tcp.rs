@@ -36,12 +36,12 @@
 //!      `RouteLine`), so every TCP test remaining in the suite works
 //!      on a wiped store.
 //!   2. `TcpSuite` is registered LAST in `all_suites()` among the
-//!      auth-dependent functional suites, and the runner does no
-//!      admin-gated work after the final suite returns — `instance.stop`
-//!      just sends a signal to the process.
-//!   3. The Crash Recovery suite (future — ticket #12+) will restart the
-//!      ElysianDB process, which re-runs `InitAdminUserIfNotExists` and
-//!      re-creates the default admin from scratch.
+//!      functional suites, and the runner does no admin-gated work after
+//!      the final suite returns — `instance.stop` just sends a signal to
+//!      the process.
+//!   3. The Crash Recovery suite (future) will restart the ElysianDB
+//!      process, which re-runs `InitAdminUserIfNotExists` and re-creates
+//!      the default admin from scratch.
 //!
 //! **If you add a new auth-gated suite, register it BEFORE `TcpSuite`
 //! in `all_suites()`** — otherwise its `setup`/cleanup path will hit an
