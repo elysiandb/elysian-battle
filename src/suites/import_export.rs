@@ -92,6 +92,8 @@ async fn export_dump(client: &ElysianClient) -> Result<Value, String> {
 /// the key is missing. The export omits entity types that have never been
 /// written to, so an absent key is equivalent to an empty list.
 fn entity_docs<'a>(dump: &'a Value, entity: &str) -> &'a [Value] {
+    // Shared empty Vec so the missing-key branch hands back a `&[Value]`
+    // without a per-call allocation; `Vec::new()` is const-constructible.
     static EMPTY: Vec<Value> = Vec::new();
     dump.get(entity)
         .and_then(|v| v.as_array())
@@ -323,7 +325,7 @@ async fn ie03_import_data(suite: &str, client: &ElysianClient) -> TestResult {
         }
     }
 
-    let payload = json!({ ENTITY: captured.clone() });
+    let payload = json!({ ENTITY: captured });
     let resp = match client.import(payload).await {
         Ok(r) => r,
         Err(e) => {

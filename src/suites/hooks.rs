@@ -201,8 +201,9 @@ async fn create_hook(
         return Err(format!("create hook expected 200, got {status}"));
     }
 
-    // Drain the response body so the HTTP connection is free for the
-    // follow-up list — we intentionally discard its `id` field.
+    // Discard the response body (its `id` is the empty string we posted,
+    // see fn-doc above) while also draining it so reqwest can reuse the
+    // keep-alive connection for the follow-up list.
     let _ = resp.bytes().await;
 
     let hooks = list_hooks_raw(client, entity).await?;
@@ -441,7 +442,7 @@ async fn hk05_list_hooks(suite: &str, client: &ElysianClient) -> TestResult {
 // hook, flip `enabled`, and send the whole object back.
 async fn hk06_disable_hook(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "HK-06 Disable hook";
-    let request = "PUT /api/hook/id/{id} (enabled=false)".to_string();
+    let request = format!("PUT /api/hook/id/{{id}} (enabled=false) for {ENTITY}");
     let start = Instant::now();
 
     let mut current = match find_hook_by_event(client, ENTITY, "pre_read").await {

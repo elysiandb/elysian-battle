@@ -148,7 +148,7 @@ async fn list_all(client: &ElysianClient) -> Result<Vec<Value>, String> {
 // MG-01 — `set` flips `status: "old"` → `"migrated"` on every doc.
 async fn mg01_set_field_on_all(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "MG-01 Set field on all";
-    let request = format!("POST /api/{ENTITY}/migrate [{{set:[{{status:migrated}}]}}]");
+    let request = format!("POST /api/{ENTITY}/migrate body=`[{{set:[{{status:migrated}}]}}]`");
     let start = Instant::now();
 
     if let Err(msg) = reset_and_seed(client).await {
@@ -228,7 +228,8 @@ async fn mg01_set_field_on_all(suite: &str, client: &ElysianClient) -> TestResul
 // and sets the leaf value on every doc.
 async fn mg02_set_nested_path(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "MG-02 Set nested path";
-    let request = format!("POST /api/{ENTITY}/migrate [{{set:[{{metadata.migrationVersion:2}}]}}]");
+    let request =
+        format!("POST /api/{ENTITY}/migrate body=`[{{set:[{{metadata.migrationVersion:2}}]}}]`");
     let start = Instant::now();
 
     if let Err(msg) = reset_and_seed(client).await {
@@ -311,7 +312,8 @@ async fn mg02_set_nested_path(suite: &str, client: &ElysianClient) -> TestResult
 // doc after a single commit.
 async fn mg03_multiple_set_actions(suite: &str, client: &ElysianClient) -> TestResult {
     let name = "MG-03 Multiple set actions";
-    let request = format!("POST /api/{ENTITY}/migrate [{{set:[{{a:1}}]}},{{set:[{{b:2}}]}}]");
+    let request =
+        format!("POST /api/{ENTITY}/migrate body=`[{{set:[{{a:1}}]}},{{set:[{{b:2}}]}}]`");
     let start = Instant::now();
 
     if let Err(msg) = reset_and_seed(client).await {
