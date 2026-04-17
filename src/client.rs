@@ -220,6 +220,19 @@ impl ElysianClient {
         Ok(self.apply_auth(req).send().await?)
     }
 
+    pub async fn get_with_params(
+        &self,
+        entity: &str,
+        id: &str,
+        params: &[(&str, &str)],
+    ) -> Result<Response> {
+        let req = self
+            .http
+            .get(self.url(&format!("/api/{entity}/{id}")))
+            .query(params);
+        Ok(self.apply_auth(req).send().await?)
+    }
+
     pub async fn update(&self, entity: &str, id: &str, body: Value) -> Result<Response> {
         let req = self
             .http
@@ -294,6 +307,11 @@ impl ElysianClient {
 
     pub async fn list_entity_types(&self) -> Result<Response> {
         let req = self.http.get(self.url("/api/entity/types"));
+        Ok(self.apply_auth(req).send().await?)
+    }
+
+    pub async fn list_entity_type_names(&self) -> Result<Response> {
+        let req = self.http.get(self.url("/api/entity/types/name"));
         Ok(self.apply_auth(req).send().await?)
     }
 

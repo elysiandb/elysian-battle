@@ -158,7 +158,17 @@ impl ElysianConfig {
             api: Api {
                 schema: Schema {
                     enabled: true,
-                    strict: false,
+                    // ElysianDB v0.1.14 gates per-entity strict-mode validation
+                    // (`internal/api/storage.go:WriteEntity` →
+                    // `internal/schema/analyzer.go:ValidateEntity`) on BOTH the
+                    // global flag AND `_manual: true` on the entity schema.
+                    // Suite 6 (Schema) tests S-05 (strict rejects undeclared
+                    // field) and S-06 (required field missing) need strict
+                    // enforcement to actually fire, so the harness enables the
+                    // global flag here. With no manual schema, validation
+                    // collapses to type-only checks (which is what every other
+                    // suite already relies on for auto-inferred entities).
+                    strict: true,
                 },
                 index: Index { workers: 2 },
                 cache: Cache {
@@ -214,7 +224,7 @@ mod tests {
         assert!(yaml.contains("mode: user"));
         assert!(yaml.contains("token: battle-test-token-2026"));
         assert!(yaml.contains("name: internal"));
-        assert!(yaml.contains("strict: false"));
+        assert!(yaml.contains("strict: true"));
         assert!(yaml.contains("flushIntervalSeconds: 30"));
         assert!(yaml.contains("maxLogMB: 50"));
     }
