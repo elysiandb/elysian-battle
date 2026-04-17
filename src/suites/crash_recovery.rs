@@ -128,11 +128,7 @@ async fn restart_and_login(
         .restart_fresh()
         .await
         .map_err(|e| format!("preamble fresh restart failed: {e:#}"))?;
-    admin_login(client).await?;
-    // Extra safety net — if anything leaks past the wipe, make sure the
-    // crash-recovery entity is empty before CR-01 seeds into it.
-    let _ = client.delete_all(ENTITY).await;
-    Ok(())
+    admin_login(client).await
 }
 
 async fn admin_login(client: &ElysianClient) -> Result<(), String> {
@@ -145,6 +141,18 @@ async fn admin_login(client: &ElysianClient) -> Result<(), String> {
         return Err(format!("admin login expected 2xx, got {status}"));
     }
     Ok(())
+}
+
+/// Best-effort "leave the instance alive" helper used by CR-03 error
+/// paths. When the test bails out mid-way (graceful stop already done,
+/// shard delete or restart failed), the orchestrator's final
+/// `instance.stop()` still needs a running process to signal. Failures
+/// here are ignored on purpose — the surrounding test has already
+/// decided to return a `fail(...)` result, and there is nothing useful
+/// to do if we cannot bring the process back.
+async fn resurrect_best_effort(instance: &mut ElysianInstance, client: &ElysianClient) {
+    let _ = instance.restart_preserving_data().await;
+    let _ = admin_login(client).await;
 }
 
 /// Seed `count` docs with predictable `cr-<tag>-<n>` ids so tests can
@@ -425,16 +433,12 @@ async fn cr03_missing_shard(instance: &mut ElysianInstance, client: &ElysianClie
     let target = match pick_file_to_delete(&data_dir) {
         Ok(p) => p,
         Err(msg) => {
-            // Restart the instance so subsequent tests (and the main
-            // orchestrator's final `stop()`) still have a live process.
-            let _ = instance.restart_preserving_data().await;
-            let _ = admin_login(client).await;
+            resurrect_best_effort(instance, client).await;
             return fail(SUITE_NAME, name, request, None, start.elapsed(), msg);
         }
     };
     if let Err(e) = std::fs::remove_file(&target) {
-        let _ = instance.restart_preserving_data().await;
-        let _ = admin_login(client).await;
+        resurrect_best_effort(instance, client).await;
         return fail(
             SUITE_NAME,
             name,

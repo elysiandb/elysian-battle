@@ -106,6 +106,11 @@ impl ElysianInstance {
     /// subsequent `SAVE` does not reliably overwrite every shard file
     /// from earlier suites — which can confuse later restore tests).
     pub async fn restart_fresh(&mut self) -> Result<()> {
+        // Ignore kill errors on purpose: callers invoke `restart_fresh`
+        // on recovery paths where the child process may already be
+        // dead (e.g. the crash-recovery preamble right after the TCP
+        // suite's destructive RESET). A missing child is not a failure
+        // here — we just want the process gone before wiping data.
         let _ = self.kill_hard().await;
         let data_dir = self.battle_dir.join("data");
         if data_dir.exists() {
