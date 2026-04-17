@@ -8,8 +8,10 @@ use crate::client::ElysianClient;
 
 mod crud;
 mod health;
+mod nested;
 mod query;
 mod query_params;
+mod schema;
 
 // ---- Status & result types ------------------------------------------------
 
@@ -145,12 +147,18 @@ pub const BATTLE_ENTITIES: &[&str] = &[
     "battle_articles",
     "battle_tags",
     "battle_schema_test",
+    "battle_schema_auto",
+    "battle_schema_manual",
+    "battle_typed",
+    "battle_typed2",
     "battle_auth_data",
     "battle_acl_data",
     "battle_tx_items",
     "battle_export_test",
     "battle_hooked_entity",
     "battle_posts",
+    "battle_authors_nested",
+    "battle_jobs_nested",
     "battle_comments",
     "battle_users_nested",
     "battle_migrate_test",
@@ -180,6 +188,8 @@ pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
         Box::new(crud::CrudSuite),
         Box::new(query::QuerySuite),
         Box::new(query_params::QueryParamsSuite),
+        Box::new(nested::NestedSuite),
+        Box::new(schema::SchemaSuite),
     ]
 }
 
@@ -227,10 +237,12 @@ mod tests {
     #[test]
     fn all_suites_includes_registered_suites() {
         let suites = all_suites(0);
-        assert_eq!(suites.len(), 4);
+        assert_eq!(suites.len(), 6);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
         assert_eq!(suites[2].name(), "Query API");
         assert_eq!(suites[3].name(), "URL Query Parameters");
+        assert_eq!(suites[4].name(), "Nested Entities");
+        assert_eq!(suites[5].name(), "Schema");
     }
 }
