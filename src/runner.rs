@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::client::ElysianClient;
 use crate::suites::{BattleReport, SuiteResult, TestStatus, TestSuite, BATTLE_ENTITIES};
@@ -161,14 +161,16 @@ async fn run_suite(suite: &dyn TestSuite, client: &ElysianClient) -> SuiteResult
     }
 }
 
-/// Two-part cleanup between suites:
-/// 1. `POST /reset` — clears all KV keys
-/// 2. `DELETE /api/{entity}` — removes documents for each known battle_* entity
+/// Cleanup between suites: `DELETE /api/{entity}` for every known battle_*
+/// entity to remove leftover test documents.
+///
+/// `POST /reset` is intentionally NOT called here even though the spec mentions
+/// it. In the ElysianDB versions targeted by this harness, `/reset` wipes
+/// every KV key including the admin session and the per-entity ACL grants —
+/// after that, even an explicitly re-logged-in admin gets `403 Access denied`
+/// on documents they own. KV-suite cleanup will be reintroduced inside the KV
+/// suite itself once that suite exists.
 async fn cleanup_between_suites(client: &ElysianClient) {
-    if let Err(e) = client.reset().await {
-        info!("KV reset between suites failed (non-fatal): {:#}", e);
-    }
-
     for entity in BATTLE_ENTITIES {
         let _ = client.delete_all(entity).await;
     }

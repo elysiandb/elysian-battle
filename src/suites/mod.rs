@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::client::ElysianClient;
 
+mod crud;
 mod health;
 
 // ---- Status & result types ------------------------------------------------
@@ -92,6 +93,7 @@ pub trait TestSuite: Send + Sync {
 
 pub const BATTLE_ENTITIES: &[&str] = &[
     "battle_books",
+    "battle_empty",
     "battle_authors",
     "battle_articles",
     "battle_tags",
@@ -126,7 +128,7 @@ pub const BATTLE_ENTITIES: &[&str] = &[
 ///
 /// Individual suite implementations are added in subsequent tickets.
 pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
-    vec![Box::new(health::HealthSuite)]
+    vec![Box::new(health::HealthSuite), Box::new(crud::CrudSuite)]
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -171,9 +173,10 @@ mod tests {
     }
 
     #[test]
-    fn all_suites_includes_health() {
+    fn all_suites_includes_health_and_crud() {
         let suites = all_suites(0);
-        assert_eq!(suites.len(), 1);
+        assert_eq!(suites.len(), 2);
         assert_eq!(suites[0].name(), "Health & System");
+        assert_eq!(suites[1].name(), "Entity CRUD");
     }
 }

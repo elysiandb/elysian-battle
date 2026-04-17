@@ -113,10 +113,10 @@ Default credentials: `admin` / `admin`
 | `GET` | `/api/{entity}/{id}` | — | Single document |
 | `PUT` | `/api/{entity}/{id}` | JSON partial update | Updated document |
 | `PUT` | `/api/{entity}` | JSON array (each with `id`) | Batch updated documents |
-| `DELETE` | `/api/{entity}/{id}` | — | Deletion confirmation |
-| `DELETE` | `/api/{entity}` | — | Delete ALL documents |
-| `GET` | `/api/{entity}/count` | — | `{"count": N}` |
-| `GET` | `/api/{entity}/{id}/exists` | — | Existence check |
+| `DELETE` | `/api/{entity}/{id}` | — | Deletion confirmation (status `200` or `204`) |
+| `DELETE` | `/api/{entity}` | — | Delete ALL documents (status `200` or `204`) |
+| `GET` | `/api/{entity}/count` | — | `{"count": N}` — historical builds may return a bare integer `N` |
+| `GET` | `/api/{entity}/{id}/exists` | — | `200` with `{"exists": true\|false}` — some builds also use bare `true`/`false`, bare `0`, `null`, `{}`, or `404` for "not found" |
 
 ### List Query Parameters
 
@@ -126,7 +126,7 @@ Default credentials: `admin` / `admin`
 | `offset` | `?offset=20` | Skip items |
 | `sort[field]` | `?sort[name]=asc` | Sort (asc/desc), auto-creates index |
 | `filter[field][op]` | `?filter[age][gt]=18` | Filter by operator |
-| `fields` | `?fields=name,email` | Field projection |
+| `fields` | `?fields=name,email` | Field projection — strict; `id` is **not** auto-included, request it explicitly if you need it (e.g. `?fields=id,name`) |
 | `includes` | `?includes=author,author.job` | Expand sub-entities |
 | `search` | `?search=keyword` | Full-text search |
 | `countOnly` | `?countOnly=true` | Return count only |

@@ -191,6 +191,22 @@ impl ElysianClient {
         Ok(self.apply_auth(req).send().await?)
     }
 
+    /// Send a raw POST body to `/api/{entity}` with an explicit content type.
+    /// Used to test malformed-JSON rejection (cannot be expressed via `serde_json::Value`).
+    pub async fn create_raw(
+        &self,
+        entity: &str,
+        body: &str,
+        content_type: &str,
+    ) -> Result<Response> {
+        let req = self
+            .http
+            .post(self.url(&format!("/api/{entity}")))
+            .header("Content-Type", content_type)
+            .body(body.to_string());
+        Ok(self.apply_auth(req).send().await?)
+    }
+
     pub async fn list(&self, entity: &str, params: &[(&str, &str)]) -> Result<Response> {
         let req = self
             .http
