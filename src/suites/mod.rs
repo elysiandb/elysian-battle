@@ -8,6 +8,8 @@ use crate::client::ElysianClient;
 
 mod crud;
 mod health;
+mod query;
+mod query_params;
 
 // ---- Status & result types ------------------------------------------------
 
@@ -77,6 +79,51 @@ where
     s.serialize_u64(d.as_millis() as u64)
 }
 
+// ---- TestResult builders ---------------------------------------------------
+//
+// Shared helpers used by every suite. The `request` argument is a
+// human-readable summary of the request for the final report — it is NOT
+// the wire-level URL or body. URL-parameter-form strings like
+// `"GET /api/x?filter[foo][eq]=bar"` appear verbatim in reports; reqwest /
+// url handle percent-encoding for the actual HTTP call.
+
+pub(crate) fn pass(
+    suite: &str,
+    name: &str,
+    request: String,
+    status: Option<u16>,
+    duration: Duration,
+) -> TestResult {
+    TestResult {
+        suite: suite.to_string(),
+        name: name.to_string(),
+        status: TestStatus::Passed,
+        duration,
+        error: None,
+        request: Some(request),
+        response_status: status,
+    }
+}
+
+pub(crate) fn fail(
+    suite: &str,
+    name: &str,
+    request: String,
+    status: Option<u16>,
+    duration: Duration,
+    error: impl Into<String>,
+) -> TestResult {
+    TestResult {
+        suite: suite.to_string(),
+        name: name.to_string(),
+        status: TestStatus::Failed,
+        duration,
+        error: Some(error.into()),
+        request: Some(request),
+        response_status: status,
+    }
+}
+
 // ---- TestSuite trait -------------------------------------------------------
 
 #[async_trait]
@@ -128,7 +175,12 @@ pub const BATTLE_ENTITIES: &[&str] = &[
 ///
 /// Individual suite implementations are added in subsequent tickets.
 pub fn all_suites(_tcp_port: u16) -> Vec<Box<dyn TestSuite>> {
-    vec![Box::new(health::HealthSuite), Box::new(crud::CrudSuite)]
+    vec![
+        Box::new(health::HealthSuite),
+        Box::new(crud::CrudSuite),
+        Box::new(query::QuerySuite),
+        Box::new(query_params::QueryParamsSuite),
+    ]
 }
 
 // ---- Tests -----------------------------------------------------------------
@@ -173,10 +225,12 @@ mod tests {
     }
 
     #[test]
-    fn all_suites_includes_health_and_crud() {
+    fn all_suites_includes_registered_suites() {
         let suites = all_suites(0);
-        assert_eq!(suites.len(), 2);
+        assert_eq!(suites.len(), 4);
         assert_eq!(suites[0].name(), "Health & System");
         assert_eq!(suites[1].name(), "Entity CRUD");
+        assert_eq!(suites[2].name(), "Query API");
+        assert_eq!(suites[3].name(), "URL Query Parameters");
     }
 }
