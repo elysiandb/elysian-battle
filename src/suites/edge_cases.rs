@@ -550,11 +550,18 @@ async fn e07_concurrent_creates(suite: &str, client: &ElysianClient) -> TestResu
         let id = format!("conc-{i:02}");
         let sem = sem.clone();
         handles.push(tokio::spawn(async move {
-            // `.ok()` over `.expect(...)` per the project's no-unwrap
-            // rule (CLAUDE.md). The semaphore is created locally and
-            // never closed, so the `None` branch is unreachable — but
-            // expressing it as an `Option` keeps the panic-free style.
-            let _permit = sem.acquire().await.ok();
+            // Propagate `AcquireError` via `?` instead of `.ok()` or
+            // `.expect(...)`. The semaphore is created locally and
+            // never closed, so this branch is unreachable today — but
+            // using `?` makes the MAX_IN_FLIGHT contract self-enforcing
+            // if the semaphore's ownership ever moves (e.g. into a
+            // struct that can be dropped mid-spawn): a closed semaphore
+            // turns into a test failure with a clear message instead
+            // of silently degrading to unbounded concurrency.
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| anyhow::anyhow!("E-07 semaphore closed: {e}"))?;
             c.create(
                 E_CONCURRENT,
                 json!({"id": id, "idx": i as i64, "label": format!("conc-{i}")}),
@@ -665,7 +672,11 @@ async fn e07_concurrent_creates(suite: &str, client: &ElysianClient) -> TestResu
         if last_count == Some(N as u64) {
             return pass(suite, name, request, Some(last_status), start.elapsed());
         }
-        tokio::time::sleep(POLL_INTERVAL).await;
+        // Skip the sleep after the final attempt so the failure path
+        // doesn't pay ~100 ms of dead wait before reporting.
+        if attempt + 1 < MAX_POLLS {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
     }
 
     fail(
