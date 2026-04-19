@@ -17,6 +17,7 @@ mod import_export;
 mod kv;
 mod migrations;
 mod nested;
+pub mod performance;
 mod query;
 mod query_params;
 mod schema;
@@ -61,11 +62,16 @@ pub struct SuiteResult {
 pub struct PerformanceResult {
     pub scenario: String,
     pub iterations: u64,
-    #[serde(serialize_with = "ser_duration_ms")]
+    /// p50 latency, serialized as u64 **microseconds**. Test and suite
+    /// durations elsewhere in the report use integer milliseconds, but
+    /// typical benchmark percentiles are sub-millisecond (e.g. 0.2 ms)
+    /// and would round to `0` under ms-granularity — microseconds keep
+    /// the precision while staying integer-typed in JSON.
+    #[serde(serialize_with = "ser_duration_us")]
     pub p50: Duration,
-    #[serde(serialize_with = "ser_duration_ms")]
+    #[serde(serialize_with = "ser_duration_us")]
     pub p95: Duration,
-    #[serde(serialize_with = "ser_duration_ms")]
+    #[serde(serialize_with = "ser_duration_us")]
     pub p99: Duration,
     pub throughput: f64,
 }
@@ -89,6 +95,13 @@ where
     S: serde::Serializer,
 {
     s.serialize_u64(d.as_millis() as u64)
+}
+
+fn ser_duration_us<S>(d: &Duration, s: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    s.serialize_u64(d.as_micros() as u64)
 }
 
 // ---- TestResult builders ---------------------------------------------------
@@ -245,6 +258,24 @@ mod tests {
         assert!(json.contains("\"duration\":42"));
         assert!(json.contains("\"status\":\"passed\""));
         assert!(!json.contains("\"error\""));
+    }
+
+    #[test]
+    fn performance_result_serializes_percentiles_as_microseconds() {
+        let p = PerformanceResult {
+            scenario: "P-01 test".to_string(),
+            iterations: 200,
+            p50: Duration::from_micros(200),
+            p95: Duration::from_micros(350),
+            p99: Duration::from_micros(420),
+            throughput: 4145.3,
+        };
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["p50"], 200);
+        assert_eq!(json["p95"], 350);
+        assert_eq!(json["p99"], 420);
+        assert_eq!(json["iterations"], 200);
+        assert_eq!(json["scenario"], "P-01 test");
     }
 
     #[test]

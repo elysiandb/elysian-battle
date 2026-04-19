@@ -106,7 +106,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     let all_suites = suites::all_suites(ports.tcp_port);
     let runner = runner::Runner::new(all_suites, cli.parse_suites())
-        .with_external_suites(vec!["Crash Recovery"]);
+        .with_external_suites(vec!["Crash Recovery", "Performance"]);
     let mut battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
 
     // Step 11b — Crash recovery suite runs outside the Runner because it
@@ -118,6 +118,29 @@ async fn run(cli: Cli) -> Result<()> {
         let result = suites::crash_recovery::run_crash_recovery(&mut instance, &http_client).await;
         println!("{}", runner::format_suite_progress(&result));
         runner::append_suite_result(&mut battle_report, result);
+    }
+
+    // Step 11c — Performance suite. Always runs last against a clean,
+    // stable instance. Returns `PerformanceResult`s (metrics-only) rather
+    // than `TestResult`s, so it cannot implement `TestSuite` and runs
+    // outside the Runner — same pattern as crash-recovery.
+    if runner.should_run("Performance") {
+        println!();
+        println!(
+            "  {} Running {} benchmarks...",
+            style("~").yellow(),
+            suites::performance::SUITE_NAME
+        );
+        let perf_start = std::time::Instant::now();
+        let perf = suites::performance::run_performance(&http_client).await;
+        println!(
+            "  {} {} — {} benchmarks ({:.1}s)",
+            style("▲").cyan(),
+            suites::performance::SUITE_NAME,
+            perf.len(),
+            perf_start.elapsed().as_secs_f64(),
+        );
+        battle_report.performance = perf;
     }
 
     // Step 12 — Stop ElysianDB
