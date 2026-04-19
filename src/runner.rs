@@ -11,6 +11,13 @@ use crate::suites::{BattleReport, SuiteResult, TestStatus, TestSuite, BATTLE_ENT
 pub struct Runner {
     suites: Vec<Box<dyn TestSuite>>,
     suite_filter: Option<Vec<String>>,
+    /// Names of suites that are run by the caller *outside* `run()` but
+    /// still participate in `--suite` filtering. Currently: `Crash
+    /// Recovery`, which `main.rs` orchestrates directly because it needs
+    /// `&mut ElysianInstance`. Used only to suppress the "no suites
+    /// match filter" warning when the filter *does* match an external
+    /// suite — the runner itself never touches these.
+    external_suite_names: Vec<&'static str>,
 }
 
 impl Runner {
@@ -18,7 +25,17 @@ impl Runner {
         Self {
             suites,
             suite_filter,
+            external_suite_names: Vec::new(),
         }
+    }
+
+    /// Register suite names that the caller runs directly (e.g. `Crash
+    /// Recovery` driven from `main.rs`). These are used only so the
+    /// filter-miss warning doesn't fire when the user invokes
+    /// `--suite <external>` on its own.
+    pub fn with_external_suites(mut self, names: Vec<&'static str>) -> Self {
+        self.external_suite_names = names;
+        self
     }
 
     /// Execute all matching suites sequentially with cleanup between each.
@@ -43,11 +60,18 @@ impl Runner {
                     style("ℹ").cyan()
                 );
             } else if let Some(ref filter) = self.suite_filter {
-                println!(
-                    "\n  {} No suites match filter: {}",
-                    style("⚠").yellow(),
-                    filter.join(", ")
-                );
+                // Don't warn when the filter matches a suite the caller
+                // runs out-of-band — otherwise `--suite crash_recovery`
+                // prints a misleading "nothing to run" right before the
+                // external suite actually executes.
+                let external_matches = self.external_suite_names.iter().any(|n| self.should_run(n));
+                if !external_matches {
+                    println!(
+                        "\n  {} No suites match filter: {}",
+                        style("⚠").yellow(),
+                        filter.join(", ")
+                    );
+                }
             }
         } else {
             println!();
@@ -65,39 +89,7 @@ impl Runner {
                 pb.set_message(suite.name().to_string());
 
                 let result = run_suite(suite.as_ref(), client).await;
-
-                let passed = result
-                    .tests
-                    .iter()
-                    .filter(|t| matches!(t.status, TestStatus::Passed))
-                    .count();
-                let failed = result
-                    .tests
-                    .iter()
-                    .filter(|t| matches!(t.status, TestStatus::Failed))
-                    .count();
-                let total = result.tests.len();
-
-                if failed > 0 {
-                    pb.println(format!(
-                        "  {} {} — {}/{} passed, {} failed ({:.1}s)",
-                        style("✗").red(),
-                        suite.name(),
-                        passed,
-                        total,
-                        failed,
-                        result.duration.as_secs_f64()
-                    ));
-                } else {
-                    pb.println(format!(
-                        "  {} {} — {}/{} passed ({:.1}s)",
-                        style("✓").green(),
-                        suite.name(),
-                        passed,
-                        total,
-                        result.duration.as_secs_f64()
-                    ));
-                }
+                pb.println(format_suite_progress(&result));
 
                 suite_results.push(result);
                 pb.set_position((step + 1) as u64);
@@ -123,7 +115,7 @@ impl Runner {
     }
 
     /// Check whether a suite name matches the `--suite` filter.
-    fn should_run(&self, suite_name: &str) -> bool {
+    pub fn should_run(&self, suite_name: &str) -> bool {
         match &self.suite_filter {
             None => true,
             Some(filter) => {
@@ -131,6 +123,47 @@ impl Runner {
                 filter.iter().any(|f| normalized.contains(f.as_str()))
             }
         }
+    }
+}
+
+/// Build the single-line progress string for a completed suite — green
+/// `✓ N/M passed (Xs)` on success, red `✗ N/M passed, F failed (Xs)`
+/// otherwise. Shared between `Runner::run` (internal suites) and
+/// `main::run` (external crash-recovery suite) so the two output paths
+/// can't drift in wording or style.
+pub fn format_suite_progress(result: &SuiteResult) -> String {
+    let passed = result
+        .tests
+        .iter()
+        .filter(|t| matches!(t.status, TestStatus::Passed))
+        .count();
+    let failed = result
+        .tests
+        .iter()
+        .filter(|t| matches!(t.status, TestStatus::Failed))
+        .count();
+    let total = result.tests.len();
+    let secs = result.duration.as_secs_f64();
+
+    if failed > 0 {
+        format!(
+            "  {} {} — {}/{} passed, {} failed ({:.1}s)",
+            style("✗").red(),
+            result.name,
+            passed,
+            total,
+            failed,
+            secs
+        )
+    } else {
+        format!(
+            "  {} {} — {}/{} passed ({:.1}s)",
+            style("✓").green(),
+            result.name,
+            passed,
+            total,
+            secs
+        )
     }
 }
 
@@ -174,6 +207,21 @@ async fn cleanup_between_suites(client: &ElysianClient) {
     for entity in BATTLE_ENTITIES {
         let _ = client.delete_all(entity).await;
     }
+}
+
+/// Append a suite result to an existing `BattleReport` and re-derive the
+/// aggregate pass/fail/skipped counters. Used by the main orchestrator to
+/// fold in the crash-recovery suite, which runs outside `Runner::run`
+/// because it needs a mutable `ElysianInstance` reference that the
+/// `TestSuite` trait does not carry.
+pub fn append_suite_result(report: &mut BattleReport, extra: SuiteResult) {
+    let extra_duration = extra.duration;
+    report.suites.push(extra);
+    let (p, f, s) = count_totals(&report.suites);
+    report.total_passed = p;
+    report.total_failed = f;
+    report.total_skipped = s;
+    report.total_duration += extra_duration;
 }
 
 fn count_totals(suites: &[SuiteResult]) -> (u64, u64, u64) {

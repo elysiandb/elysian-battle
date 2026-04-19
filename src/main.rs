@@ -105,8 +105,20 @@ async fn run(cli: Cli) -> Result<()> {
     );
 
     let all_suites = suites::all_suites(ports.tcp_port);
-    let runner = runner::Runner::new(all_suites, cli.parse_suites());
-    let battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
+    let runner = runner::Runner::new(all_suites, cli.parse_suites())
+        .with_external_suites(vec!["Crash Recovery"]);
+    let mut battle_report = runner.run(&http_client, &repo_info.checked_out_ref).await;
+
+    // Step 11b — Crash recovery suite runs outside the Runner because it
+    // needs a mutable `ElysianInstance` reference (kill_hard + restart).
+    // The runner's --suite filter is honored via `should_run`, so
+    // `--suite crash_recovery` still works end-to-end.
+    if runner.should_run("Crash Recovery") {
+        println!();
+        let result = suites::crash_recovery::run_crash_recovery(&mut instance, &http_client).await;
+        println!("{}", runner::format_suite_progress(&result));
+        runner::append_suite_result(&mut battle_report, result);
+    }
 
     // Step 12 — Stop ElysianDB
     if !cli.keep_alive {
