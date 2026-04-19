@@ -12,13 +12,23 @@
 //!
 //! ## Percentile computation
 //!
+//! Nearest-rank, no interpolation: `sorted[floor(len * p)]`, clamped at
+//! `len - 1`. This matches the spec in `doc/test-scenarios.md` (Suite 17)
+//! and is what CI consumers of the JSON `performance[]` array should
+//! assume — no `R-7` / linear-interpolation alternative is used.
+//!
 //! ```text
 //! sorted = sort(durations)
-//! p50 = sorted[len * 0.50]
-//! p95 = sorted[len * 0.95]
-//! p99 = sorted[len * 0.99]
-//! throughput = iterations / total_elapsed_seconds
+//! p50 = sorted[floor(len * 0.50)]
+//! p95 = sorted[floor(len * 0.95)]
+//! p99 = sorted[floor(len * 0.99)]
+//! throughput = successful_requests / total_elapsed_seconds
 //! ```
+//!
+//! Throughput divides by the count of **successful** requests rather than
+//! the attempted `iterations` so a silent HTTP failure can never inflate
+//! req/s. If every request succeeds (the happy path for a green recette)
+//! the two are identical.
 //!
 //! ## Data dependency between scenarios
 //!
@@ -48,8 +58,7 @@ const KV_KEY: &str = "battle_perf_kv_key";
 pub async fn run_performance(client: &ElysianClient) -> Vec<PerformanceResult> {
     let mut results = Vec::with_capacity(8);
 
-    let _ = client.delete_all(ENTITY).await;
-    let _ = client.kv_delete(KV_KEY).await;
+    cleanup(client, "pre").await;
 
     let (p01, sample_id) = p01_single_create(client).await;
     results.push(p01);
@@ -66,10 +75,34 @@ pub async fn run_performance(client: &ElysianClient) -> Vec<PerformanceResult> {
     results.push(p07_concurrent_reads(client).await);
     results.push(p08_kv_cycle(client).await);
 
-    let _ = client.delete_all(ENTITY).await;
-    let _ = client.kv_delete(KV_KEY).await;
+    cleanup(client, "post").await;
 
     results
+}
+
+/// Pre/post cleanup for the perf entity + KV key. Failures are expected
+/// on a fresh instance (nothing to delete yet) and harmless if the entity
+/// state is already clean, but a 5xx here usually signals an auth or
+/// connectivity problem worth surfacing — warn rather than silently
+/// swallowing, mirroring the `warn!` style every scenario uses for
+/// per-iteration failures.
+async fn cleanup(client: &ElysianClient, phase: &str) {
+    match client.delete_all(ENTITY).await {
+        Ok(r) if r.status().is_success() => {}
+        Ok(r) => warn!(
+            "Performance {phase}-cleanup DELETE /api/{ENTITY} returned {}",
+            r.status()
+        ),
+        Err(e) => warn!("Performance {phase}-cleanup DELETE /api/{ENTITY} failed: {e:#}"),
+    }
+    match client.kv_delete(KV_KEY).await {
+        Ok(r) if r.status().is_success() => {}
+        Ok(r) => warn!(
+            "Performance {phase}-cleanup DELETE /kv/{KV_KEY} returned {}",
+            r.status()
+        ),
+        Err(e) => warn!("Performance {phase}-cleanup DELETE /kv/{KV_KEY} failed: {e:#}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,9 +213,12 @@ async fn p05_filtered_query(client: &ElysianClient) -> PerformanceResult {
     let mut durations = Vec::with_capacity(ITER as usize);
     let total_start = Instant::now();
 
-    // Filter values must be JSON strings (see query.rs header). Targets a
-    // value seeded by P-01 (value: 42) so the filter has a deterministic
-    // non-empty match in every iteration.
+    // Filter values must be JSON strings — the payload parser at
+    // `internal/transport/http/api/query.go:ParseFilterNode` asserts
+    // `val.(string)` and coerces numerics server-side via
+    // `strconv.ParseFloat` in `matchNumber` (see the query.rs header
+    // for the full write-up). The literal "42" matches P-01's seed at
+    // `value: 42` so the filter always has ≥1 hit in every iteration.
     let body = json!({
         "entity": ENTITY,
         "filters": {"and": [{"value": {"eq": "42"}}]}
@@ -233,23 +269,26 @@ async fn p07_concurrent_reads(client: &ElysianClient) -> PerformanceResult {
     let mut durations = Vec::with_capacity(TOTAL as usize);
     let total_start = Instant::now();
 
+    // `join_all` keeps all 10 requests on the current task and awaits them
+    // concurrently over the network. `tokio::spawn` would also run them
+    // in parallel but adds per-request scheduling + possible thread-
+    // migration overhead that leaks into microsecond-level latency
+    // numbers, which is the only thing P-07 is measuring.
     for b in 0..BATCHES {
-        let mut handles = Vec::with_capacity(PARALLEL);
-        for _ in 0..PARALLEL {
+        let futs = (0..PARALLEL).map(|_| {
             let c = client.clone();
-            handles.push(tokio::spawn(async move {
+            async move {
                 let start = Instant::now();
                 let resp = c.list(ENTITY, &[("limit", "10")]).await;
                 (start.elapsed(), resp.map(|r| r.status().is_success()))
-            }));
-        }
+            }
+        });
 
-        for h in handles {
-            match h.await {
-                Ok((elapsed, Ok(true))) => durations.push(elapsed),
-                Ok((_, Ok(false))) => warn!("P-07 batch {b} a request returned non-success"),
-                Ok((_, Err(e))) => warn!("P-07 batch {b} request failed: {e:#}"),
-                Err(e) => warn!("P-07 batch {b} join error: {e:#}"),
+        for (elapsed, result) in futures::future::join_all(futs).await {
+            match result {
+                Ok(true) => durations.push(elapsed),
+                Ok(false) => warn!("P-07 batch {b} a request returned non-success"),
+                Err(e) => warn!("P-07 batch {b} request failed: {e:#}"),
             }
         }
     }
@@ -294,8 +333,18 @@ async fn p08_kv_cycle(client: &ElysianClient) -> PerformanceResult {
 
 /// Build a `PerformanceResult` from a list of per-request durations, the
 /// number of iterations attempted, and the wall-clock total for
-/// throughput. Zero-pads percentiles and throughput when no samples
-/// succeeded so downstream reporting stays well-formed.
+/// throughput.
+///
+/// `iterations` is the attempted count and is reported verbatim on the
+/// struct (CI sees the workload size the scenario nominally ran). The
+/// throughput denominator is `durations.len()` — the count of successful
+/// requests — so a silent HTTP failure can never inflate req/s. In the
+/// green-recette happy path every iteration succeeds and the two are
+/// equal; the distinction only matters when some requests are filtered
+/// out via `warn!` in a scenario's hot loop.
+///
+/// Zero-pads percentiles and throughput when no samples succeeded so
+/// downstream reporting stays well-formed.
 fn compute_percentiles(
     scenario: &str,
     mut durations: Vec<Duration>,
@@ -317,7 +366,7 @@ fn compute_percentiles(
 
     let total_secs = total.as_secs_f64();
     let throughput = if total_secs > 0.0 {
-        iterations as f64 / total_secs
+        len as f64 / total_secs
     } else {
         0.0
     };
@@ -366,11 +415,27 @@ mod tests {
     #[test]
     fn compute_percentiles_empty_samples_returns_zeros() {
         let r = compute_percentiles("x", vec![], 10, Duration::from_secs(1));
+        // `iterations` mirrors the attempted count (10), but throughput
+        // divides by successful requests — zero of them succeeded, so
+        // req/s is honestly 0.0 rather than 10/1s.
         assert_eq!(r.iterations, 10);
         assert_eq!(r.p50, Duration::ZERO);
         assert_eq!(r.p95, Duration::ZERO);
         assert_eq!(r.p99, Duration::ZERO);
-        assert_eq!(r.throughput, 10.0);
+        assert_eq!(r.throughput, 0.0);
+    }
+
+    #[test]
+    fn compute_percentiles_throughput_counts_only_successful() {
+        // 80 of 100 attempted succeeded in 2 s → 40 req/s, not 50.
+        let r = compute_percentiles(
+            "x",
+            vec![Duration::from_millis(1); 80],
+            100,
+            Duration::from_secs(2),
+        );
+        assert_eq!(r.iterations, 100);
+        assert!((r.throughput - 40.0).abs() < 1e-9);
     }
 
     #[test]
