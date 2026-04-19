@@ -22,11 +22,19 @@ pub struct ElysianClient {
     token: Option<String>,
 }
 
+/// Per-request HTTP timeout. Any legitimate operation in this harness —
+/// CRUD, query, KV, even import/export of the battle seed data — completes
+/// in well under a second locally; 30 s is a generous safety net that still
+/// unsticks the perf and crash-recovery suites if a connection hangs
+/// instead of draining the whole run into a multi-minute hang.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl ElysianClient {
     /// Create a new client pointing at `http://127.0.0.1:{port}`.
     pub fn new(port: u16) -> Self {
         let http = Client::builder()
             .cookie_store(true)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .expect("Failed to build reqwest client");
 

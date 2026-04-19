@@ -36,8 +36,73 @@ struct FailedRow {
     request: String,
 }
 
+#[derive(Tabled)]
+struct PerformanceRow {
+    #[tabled(rename = "Scenario")]
+    scenario: String,
+    #[tabled(rename = "Iterations")]
+    iterations: u64,
+    #[tabled(rename = "p50")]
+    p50: String,
+    #[tabled(rename = "p95")]
+    p95: String,
+    #[tabled(rename = "p99")]
+    p99: String,
+    #[tabled(rename = "Throughput")]
+    throughput: String,
+}
+
+fn format_duration_ms(d: std::time::Duration) -> String {
+    let ms = d.as_secs_f64() * 1000.0;
+    if ms < 1.0 {
+        format!("{:.2} ms", ms)
+    } else if ms < 100.0 {
+        format!("{:.1} ms", ms)
+    } else {
+        format!("{:.0} ms", ms)
+    }
+}
+
+fn print_performance_report(report: &BattleReport) {
+    if report.performance.is_empty() {
+        return;
+    }
+
+    let rows: Vec<PerformanceRow> = report
+        .performance
+        .iter()
+        .map(|p| PerformanceRow {
+            scenario: p.scenario.clone(),
+            iterations: p.iterations,
+            p50: format_duration_ms(p.p50),
+            p95: format_duration_ms(p.p95),
+            p99: format_duration_ms(p.p99),
+            throughput: format!("{:.1} req/s", p.throughput),
+        })
+        .collect();
+
+    println!(
+        "\n  {} {}\n",
+        style("──").dim(),
+        style("Performance").bold().cyan()
+    );
+    let table = Table::new(&rows).with(Style::rounded()).to_string();
+    for line in table.lines() {
+        println!("  {line}");
+    }
+}
+
 fn print_text_report(report: &BattleReport) {
+    // With `--suite performance`, `suites` is empty but `performance`
+    // is populated — still render the performance section + summary in
+    // that case instead of bailing out early.
+    if report.suites.is_empty() && report.performance.is_empty() {
+        return;
+    }
+
     if report.suites.is_empty() {
+        print_performance_report(report);
+        print_summary_line(report);
         return;
     }
 
@@ -113,7 +178,14 @@ fn print_text_report(report: &BattleReport) {
         }
     }
 
-    // Summary line
+    // Performance section (metrics-only — always rendered after failures
+    // so the reader sees them even in a flawless run).
+    print_performance_report(report);
+
+    print_summary_line(report);
+}
+
+fn print_summary_line(report: &BattleReport) {
     println!("\n  {} {}\n", style("──").dim(), style("Summary").bold());
 
     let total = report.total_passed + report.total_failed + report.total_skipped;
